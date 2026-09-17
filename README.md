@@ -26,7 +26,7 @@
 ## Project Structure
 
 ## Installation
-git clone <repository-url>
+git clone https://github.com/judejacob1027-hack/AI-Security-Face-Recognition.git
 cd AI-Security-Face-Recognition
 
 python -m venv venv
