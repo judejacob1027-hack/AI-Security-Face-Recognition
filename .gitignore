@@ -1,0 +1,38 @@
+# Secrets
+secret.key
+vault.key
+*.key
+.env
+.env.*
+
+# Private data
+secure_data/
+known_faces/
+security_incidents/
+attendance.csv
+security_events.csv
+face_encodings.pkl
+*.pkl
+
+# Legacy data
+users.txt
+face_model.yml
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+camera_test.py
+test_encryption.py
