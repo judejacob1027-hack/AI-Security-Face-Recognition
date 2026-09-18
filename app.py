@@ -1,12 +1,29 @@
-# COMPLETE app.py
+# ============================================================
 # AI SECURITY - FACE RECOGNITION
-# Includes encrypted storage, login brute-force protection,
-# face recognition, unknown-face encrypted snapshots + viewer,
-# attendance, security logs, and a basic blink-based liveness challenge.
+# COMPLETE SINGLE-FILE app.py
+#
+# Features:
+# - Admin login
+# - User account creation/login
+# - Password hashing
+# - Brute-force protection
+# - Progressive lockout
+# - AES-256-GCM encrypted storage
+# - Face registration
+# - Face recognition
+# - Basic blink liveness
+# - Unknown-face encrypted snapshots
+# - Incident viewer
+# - Attendance
+# - Security event log
+# - User profiles
+# - Delete users
+# - Auto face retraining
 #
 # IMPORTANT:
-# The blink-based liveness check is a basic anti-spoof layer.
+# Blink liveness is a BASIC anti-spoof layer.
 # It is NOT a high-assurance biometric anti-spoofing system.
+# ============================================================
 
 import os
 import csv
@@ -29,48 +46,72 @@ from PIL import Image, ImageTk
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
 APP_TITLE = "AI SECURITY - FACE RECOGNITION"
 
 SECURE_DIR = "secure_data"
-SECURE_FACES_DIR = os.path.join(SECURE_DIR, "known_faces")
-SECURE_INCIDENTS_DIR = os.path.join(SECURE_DIR, "security_incidents")
-ENCODINGS_FILE = os.path.join(SECURE_DIR, "face_encodings.pkl.enc")
-ATTENDANCE_FILE = os.path.join(SECURE_DIR, "attendance.csv.enc")
-SECURITY_LOG_FILE = os.path.join(SECURE_DIR, "security_events.csv.enc")
-USER_PROFILES_FILE = os.path.join(SECURE_DIR, "user_profiles.pkl.enc")
+SECURE_FACES_DIR = os.path.join(
+    SECURE_DIR, "known_faces"
+)
+SECURE_INCIDENTS_DIR = os.path.join(
+    SECURE_DIR, "security_incidents"
+)
+
+ENCODINGS_FILE = os.path.join(
+    SECURE_DIR, "face_encodings.pkl.enc"
+)
+
+ATTENDANCE_FILE = os.path.join(
+    SECURE_DIR, "attendance.csv.enc"
+)
+
+SECURITY_LOG_FILE = os.path.join(
+    SECURE_DIR, "security_events.csv.enc"
+)
+
+USER_PROFILES_FILE = os.path.join(
+    SECURE_DIR, "user_profiles.pkl.enc"
+)
+
+USER_ACCOUNTS_FILE = os.path.join(
+    SECURE_DIR, "user_accounts.pkl.enc"
+)
+
 ENCRYPTION_KEY_FILE = "vault.key"
 
+# Legacy files
 LEGACY_KNOWN_FACES_DIR = "known_faces"
 LEGACY_ENCODINGS_FILE = "face_encodings.pkl"
 LEGACY_ATTENDANCE_FILE = "attendance.csv"
 LEGACY_SECURITY_LOG_FILE = "security_events.csv"
 LEGACY_INCIDENTS_DIR = "security_incidents"
 
+# Admin password.
+# Change this before using the application in production.
 ADMIN_PASSWORD = "admin123"
+
 FACE_THRESHOLD = 0.48
 
-
-# ============================================================
-# BRUTE-FORCE PROTECTION
-# ============================================================
-
-# Maximum failed attempts before a lockout.
+# Login protection
 MAX_LOGIN_ATTEMPTS = 2
 
-# Progressive lockout schedule:
-# Level 1 = 5 minutes
-# Level 2 = 15 minutes
-# Level 3 = 30 minutes
-# Level 4+ = 60 minutes maximum.
 INITIAL_LOCKOUT_SECONDS = 5 * 60
 MAX_LOCKOUT_SECONDS = 60 * 60
 
+# User account protection
+USER_MAX_LOGIN_ATTEMPTS = 3
+USER_INITIAL_LOCKOUT = 60
+USER_MAX_LOCKOUT = 30 * 60
 
-# Basic blink/liveness settings
+# Liveness
 BLINK_EAR_THRESHOLD = 0.21
 BLINK_MIN_CLOSED_FRAMES = 2
 LIVENESS_TIMEOUT_SECONDS = 8
 
+# UI
 BG = "#0b1220"
 CARD = "#111827"
 CARD2 = "#172033"
@@ -85,13 +126,36 @@ WHITE = "#ffffff"
 MAGIC = b"AISF-ENC-V1"
 NONCE_SIZE = 12
 
-os.makedirs(SECURE_DIR, exist_ok=True)
-os.makedirs(SECURE_FACES_DIR, exist_ok=True)
-os.makedirs(SECURE_INCIDENTS_DIR, exist_ok=True)
+
+# ============================================================
+# CREATE DIRECTORIES
+# ============================================================
+
+os.makedirs(
+    SECURE_DIR,
+    exist_ok=True
+)
+
+os.makedirs(
+    SECURE_FACES_DIR,
+    exist_ok=True
+)
+
+os.makedirs(
+    SECURE_INCIDENTS_DIR,
+    exist_ok=True
+)
+
+
+# ============================================================
+# GLOBAL STATE
+# ============================================================
 
 root = None
+
 camera = None
 camera_running = False
+
 scanner_window = None
 scanner_video_label = None
 scanner_status_label = None
@@ -101,10 +165,22 @@ scanner_liveness_label = None
 known_encodings = []
 known_names = []
 
-# Login security state
-login_failed_attempts = 0
-login_locked_until = 0
-progressive_lock_level = 0
+# Admin authentication
+admin_failed_attempts = 0
+admin_locked_until = 0
+admin_progressive_level = 0
+
+# User authentication
+user_failed_attempts = 0
+user_locked_until = 0
+user_progressive_level = 0
+
+current_user = None
+current_user_role = None
+
+password_entry = None
+username_entry = None
+login_status = None
 
 processing_frame = False
 result_lock = threading.Lock()
@@ -115,6 +191,7 @@ stable_count = 0
 last_recognized_name = ""
 unknown_alerted = False
 last_incident_id = ""
+
 camera_frame_count = 0
 
 liveness_started_at = 0.0
@@ -125,29 +202,44 @@ last_liveness_log_time = 0.0
 
 
 # ============================================================
-# AES-256-GCM ENCRYPTION
+# ENCRYPTION
 # ============================================================
 
 def create_encryption_key():
-    if not os.path.exists(ENCRYPTION_KEY_FILE):
-        key = AESGCM.generate_key(bit_length=256)
+    if not os.path.exists(
+        ENCRYPTION_KEY_FILE
+    ):
+        key = AESGCM.generate_key(
+            bit_length=256
+        )
 
-        with open(ENCRYPTION_KEY_FILE, "wb") as file:
+        with open(
+            ENCRYPTION_KEY_FILE,
+            "wb"
+        ) as file:
             file.write(key)
 
-        print("AES-256 encryption key created.")
+        print(
+            "AES-256 encryption key created."
+        )
 
 
 def load_encryption_key():
-    if not os.path.exists(ENCRYPTION_KEY_FILE):
+    if not os.path.exists(
+        ENCRYPTION_KEY_FILE
+    ):
         create_encryption_key()
 
-    with open(ENCRYPTION_KEY_FILE, "rb") as file:
+    with open(
+        ENCRYPTION_KEY_FILE,
+        "rb"
+    ) as file:
         key = file.read()
 
     if len(key) != 32:
         raise ValueError(
-            "Invalid encryption key. vault.key must contain 32 bytes."
+            "Invalid vault.key. "
+            "AES-256 requires 32 bytes."
         )
 
     return key
@@ -157,9 +249,13 @@ ENCRYPTION_KEY = load_encryption_key()
 
 
 def encrypt_data(data):
-    aes = AESGCM(ENCRYPTION_KEY)
+    aes = AESGCM(
+        ENCRYPTION_KEY
+    )
 
-    nonce = secrets.token_bytes(NONCE_SIZE)
+    nonce = secrets.token_bytes(
+        NONCE_SIZE
+    )
 
     encrypted = aes.encrypt(
         nonce,
@@ -167,13 +263,17 @@ def encrypt_data(data):
         MAGIC
     )
 
-    return MAGIC + nonce + encrypted
+    return (
+        MAGIC
+        + nonce
+        + encrypted
+    )
 
 
 def decrypt_data(data):
     if not data.startswith(MAGIC):
         raise ValueError(
-            "File is not a valid encrypted AI Security file."
+            "Invalid encrypted file."
         )
 
     start = len(MAGIC)
@@ -191,7 +291,9 @@ def decrypt_data(data):
             "Invalid encryption nonce."
         )
 
-    aes = AESGCM(ENCRYPTION_KEY)
+    aes = AESGCM(
+        ENCRYPTION_KEY
+    )
 
     return aes.decrypt(
         nonce,
@@ -200,13 +302,23 @@ def decrypt_data(data):
     )
 
 
-def write_encrypted_file(path, data):
-    encrypted = encrypt_data(data)
+def write_encrypted_file(
+    path,
+    data
+):
+    encrypted = encrypt_data(
+        data
+    )
 
     temp_path = path + ".tmp"
 
-    with open(temp_path, "wb") as file:
-        file.write(encrypted)
+    with open(
+        temp_path,
+        "wb"
+    ) as file:
+        file.write(
+            encrypted
+        )
 
     os.replace(
         temp_path,
@@ -215,312 +327,469 @@ def write_encrypted_file(path, data):
 
 
 def read_encrypted_file(path):
-    with open(path, "rb") as file:
+    with open(
+        path,
+        "rb"
+    ) as file:
         encrypted = file.read()
 
-    return decrypt_data(encrypted)
+    return decrypt_data(
+        encrypted
+    )
 
 
-def encrypt_plain_file(plain_path, encrypted_path):
-    with open(plain_path, "rb") as file:
-        data = file.read()
+# ============================================================
+# PASSWORD HASHING
+# ============================================================
+
+def hash_password(password):
+    return hashlib.sha256(
+        password.encode("utf-8")
+    ).hexdigest()
+
+
+def valid_password(password):
+    return (
+        len(password) >= 6
+    )
+
+
+ADMIN_PASSWORD_HASH = hash_password(
+    ADMIN_PASSWORD
+)
+
+
+# ============================================================
+# USER ACCOUNT STORAGE
+# ============================================================
+
+def load_user_accounts():
+    if not os.path.exists(
+        USER_ACCOUNTS_FILE
+    ):
+        return {}
+
+    try:
+        data = read_encrypted_file(
+            USER_ACCOUNTS_FILE
+        )
+
+        accounts = pickle.loads(
+            data
+        )
+
+        if isinstance(
+            accounts,
+            dict
+        ):
+            return accounts
+
+    except Exception as error:
+        print(
+            "User account load error:",
+            error
+        )
+
+    return {}
+
+
+def save_user_accounts(accounts):
+    data = pickle.dumps(
+        accounts,
+        protocol=pickle.HIGHEST_PROTOCOL
+    )
 
     write_encrypted_file(
-        encrypted_path,
+        USER_ACCOUNTS_FILE,
         data
     )
 
-    check = read_encrypted_file(
-        encrypted_path
-    )
 
-    if check != data:
-        raise ValueError(
-            "Encryption verification failed."
+def username_valid(username):
+    return bool(
+        re.fullmatch(
+            r"[A-Za-z0-9_.-]{3,32}",
+            username
         )
-
-    os.remove(plain_path)
-
-
-# ============================================================
-# SAFE NAME / DATA MIGRATION
-# ============================================================
-
-def safe_user_name(name):
-    name = str(name).strip()
-
-    name = re.sub(
-        r'[<>:"/\\|?*]',
-        "_",
-        name
     )
 
-    name = re.sub(
-        r"\s+",
-        " ",
-        name
-    ).strip()
 
-    if not name or name in {".", ".."}:
-        return ""
-
-    return name[:80]
-
-
-def migrate_single_file(
-    legacy_path,
-    encrypted_path
+def create_user_account(
+    username,
+    password,
+    role="USER"
 ):
+    username = username.strip()
+
+    if not username_valid(
+        username
+    ):
+        return False, (
+            "Username must contain "
+            "3-32 letters, numbers, "
+            "underscore, dot or hyphen."
+        )
+
+    if not valid_password(
+        password
+    ):
+        return False, (
+            "Password must contain "
+            "at least 6 characters."
+        )
+
+    accounts = load_user_accounts()
+
+    key = username.lower()
+
+    if key in accounts:
+        return False, (
+            "Username already exists."
+        )
+
+    accounts[key] = {
+        "username": username,
+        "password_hash": hash_password(
+            password
+        ),
+        "role": role,
+        "created_at": datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+        "failed_attempts": 0,
+        "locked_until": 0,
+        "lock_level": 0,
+    }
+
+    save_user_accounts(
+        accounts
+    )
+
+    log_security_event(
+        "USER_ACCOUNT_CREATED",
+        f"Username: {username} | Role: {role}"
+    )
+
+    return True, "Account created successfully."
+
+
+def verify_user_account(
+    username,
+    password
+):
+    accounts = load_user_accounts()
+
+    key = username.strip().lower()
+
+    account = accounts.get(
+        key
+    )
+
+    if not account:
+        return False, (
+            "Invalid username or password."
+        )
+
+    now = time.time()
+
+    locked_until = float(
+        account.get(
+            "locked_until",
+            0
+        )
+    )
+
+    if now < locked_until:
+        remaining = int(
+            locked_until - now
+        ) + 1
+
+        return False, (
+            f"Account locked. "
+            f"Try again in {remaining} seconds."
+        )
+
     if (
-        os.path.exists(legacy_path)
-        and not os.path.exists(encrypted_path)
+        hash_password(password)
+        == account.get(
+            "password_hash"
+        )
     ):
-        try:
-            encrypt_plain_file(
-                legacy_path,
-                encrypted_path
-            )
+        account["failed_attempts"] = 0
+        account["locked_until"] = 0
+        account["lock_level"] = 0
 
-            print(
-                f"Migrated: "
-                f"{legacy_path} -> {encrypted_path}"
-            )
+        accounts[key] = account
 
-        except Exception as error:
-            print(
-                f"Migration failed for "
-                f"{legacy_path}: {error}"
-            )
-
-
-def migrate_known_faces():
-    if not os.path.isdir(
-        LEGACY_KNOWN_FACES_DIR
-    ):
-        return
-
-    for user_name in os.listdir(
-        LEGACY_KNOWN_FACES_DIR
-    ):
-        old_user_dir = os.path.join(
-            LEGACY_KNOWN_FACES_DIR,
-            user_name
+        save_user_accounts(
+            accounts
         )
 
-        if not os.path.isdir(old_user_dir):
-            continue
+        return True, account
 
-        safe_name = safe_user_name(
-            user_name
-        )
-
-        if not safe_name:
-            continue
-
-        secure_user_dir = os.path.join(
-            SECURE_FACES_DIR,
-            safe_name
-        )
-
-        os.makedirs(
-            secure_user_dir,
-            exist_ok=True
-        )
-
-        for filename in os.listdir(
-            old_user_dir
-        ):
-            old_file = os.path.join(
-                old_user_dir,
-                filename
+    account["failed_attempts"] = (
+        int(
+            account.get(
+                "failed_attempts",
+                0
             )
-
-            if not os.path.isfile(old_file):
-                continue
-
-            extension = os.path.splitext(
-                filename
-            )[1].lower()
-
-            if extension not in {
-                ".jpg",
-                ".jpeg",
-                ".png",
-                ".bmp"
-            }:
-                continue
-
-            secure_filename = (
-                filename
-                + ".enc"
-            )
-
-            secure_file = os.path.join(
-                secure_user_dir,
-                secure_filename
-            )
-
-            try:
-                if not os.path.exists(
-                    secure_file
-                ):
-                    with open(
-                        old_file,
-                        "rb"
-                    ) as file:
-                        data = file.read()
-
-                    write_encrypted_file(
-                        secure_file,
-                        data
-                    )
-
-                    if (
-                        read_encrypted_file(
-                            secure_file
-                        ) == data
-                    ):
-                        os.remove(
-                            old_file
-                        )
-
-            except Exception as error:
-                print(
-                    f"Face migration error: "
-                    f"{old_file} | {error}"
-                )
-
-        try:
-            if (
-                os.path.isdir(old_user_dir)
-                and not os.listdir(old_user_dir)
-            ):
-                os.rmdir(
-                    old_user_dir
-                )
-
-        except Exception:
-            pass
-
-    try:
-        if (
-            os.path.isdir(
-                LEGACY_KNOWN_FACES_DIR
-            )
-            and not os.listdir(
-                LEGACY_KNOWN_FACES_DIR
-            )
-        ):
-            os.rmdir(
-                LEGACY_KNOWN_FACES_DIR
-            )
-
-    except Exception:
-        pass
-
-
-def migrate_incidents():
-    if not os.path.isdir(
-        LEGACY_INCIDENTS_DIR
-    ):
-        return
-
-    for filename in os.listdir(
-        LEGACY_INCIDENTS_DIR
-    ):
-        old_file = os.path.join(
-            LEGACY_INCIDENTS_DIR,
-            filename
-        )
-
-        if not os.path.isfile(old_file):
-            continue
-
-        extension = os.path.splitext(
-            filename
-        )[1].lower()
-
-        if extension not in {
-            ".jpg",
-            ".jpeg",
-            ".png"
-        }:
-            continue
-
-        secure_file = os.path.join(
-            SECURE_INCIDENTS_DIR,
-            filename + ".enc"
-        )
-
-        try:
-            if not os.path.exists(
-                secure_file
-            ):
-                with open(
-                    old_file,
-                    "rb"
-                ) as file:
-                    data = file.read()
-
-                write_encrypted_file(
-                    secure_file,
-                    data
-                )
-
-                if (
-                    read_encrypted_file(
-                        secure_file
-                    ) == data
-                ):
-                    os.remove(
-                        old_file
-                    )
-
-        except Exception as error:
-            print(
-                f"Incident migration error: "
-                f"{error}"
-            )
-
-    try:
-        if (
-            os.path.isdir(
-                LEGACY_INCIDENTS_DIR
-            )
-            and not os.listdir(
-                LEGACY_INCIDENTS_DIR
-            )
-        ):
-            os.rmdir(
-                LEGACY_INCIDENTS_DIR
-            )
-
-    except Exception:
-        pass
-
-
-def migrate_existing_data():
-    migrate_single_file(
-        LEGACY_ENCODINGS_FILE,
-        ENCODINGS_FILE
+        ) + 1
     )
 
-    migrate_single_file(
-        LEGACY_ATTENDANCE_FILE,
-        ATTENDANCE_FILE
+    if (
+        account["failed_attempts"]
+        >= USER_MAX_LOGIN_ATTEMPTS
+    ):
+        account["lock_level"] = (
+            int(
+                account.get(
+                    "lock_level",
+                    0
+                )
+            ) + 1
+        )
+
+        level = account[
+            "lock_level"
+        ]
+
+        if level == 1:
+            lock_time = USER_INITIAL_LOCKOUT
+        elif level == 2:
+            lock_time = 5 * 60
+        elif level == 3:
+            lock_time = 15 * 60
+        else:
+            lock_time = USER_MAX_LOCKOUT
+
+        account["locked_until"] = (
+            time.time()
+            + lock_time
+        )
+
+        account["failed_attempts"] = 0
+
+        log_security_event(
+            "USER_ACCOUNT_LOCKOUT",
+            (
+                f"Username: {username} | "
+                f"Level: {level} | "
+                f"Seconds: {lock_time}"
+            )
+        )
+
+        accounts[key] = account
+
+        save_user_accounts(
+            accounts
+        )
+
+        return False, (
+            f"Account locked for "
+            f"{lock_time // 60 if lock_time >= 60 else lock_time} "
+            f"{'minutes' if lock_time >= 60 else 'seconds'}."
+        )
+
+    remaining = (
+        USER_MAX_LOGIN_ATTEMPTS
+        - account["failed_attempts"]
     )
 
-    migrate_single_file(
-        LEGACY_SECURITY_LOG_FILE,
-        SECURITY_LOG_FILE
+    accounts[key] = account
+
+    save_user_accounts(
+        accounts
     )
 
-    migrate_known_faces()
-    migrate_incidents()
+    return False, (
+        f"Invalid username or password. "
+        f"{remaining} attempt(s) remaining."
+    )
+
+
+def delete_user_account(username):
+    accounts = load_user_accounts()
+
+    key = username.lower()
+
+    if key not in accounts:
+        return False
+
+    del accounts[key]
+
+    save_user_accounts(
+        accounts
+    )
+
+    log_security_event(
+        "USER_ACCOUNT_DELETED",
+        f"Username: {username}"
+    )
+
+    return True
+
+
+def change_user_password(
+    username
+):
+    window = tk.Toplevel(root)
+
+    window.title(
+        "Change Password"
+    )
+
+    window.geometry(
+        "480x350"
+    )
+
+    window.configure(
+        bg=BG
+    )
+
+    window.transient(root)
+    window.grab_set()
+
+    tk.Label(
+        window,
+        text="CHANGE PASSWORD",
+        font=("Segoe UI", 20, "bold"),
+        bg=BG,
+        fg=GREEN
+    ).pack(
+        pady=(25, 20)
+    )
+
+    form = tk.Frame(
+        window,
+        bg=CARD,
+        padx=25,
+        pady=25
+    )
+
+    form.pack(
+        padx=30,
+        fill="both",
+        expand=True
+    )
+
+    tk.Label(
+        form,
+        text="New Password",
+        bg=CARD,
+        fg=TEXT
+    ).pack(
+        anchor="w"
+    )
+
+    entry = tk.Entry(
+        form,
+        show="*",
+        bg=CARD2,
+        fg=WHITE,
+        insertbackground=WHITE,
+        relief="flat"
+    )
+
+    entry.pack(
+        fill="x",
+        pady=8,
+        ipady=7
+    )
+
+    tk.Label(
+        form,
+        text="Confirm Password",
+        bg=CARD,
+        fg=TEXT
+    ).pack(
+        anchor="w"
+    )
+
+    confirm = tk.Entry(
+        form,
+        show="*",
+        bg=CARD2,
+        fg=WHITE,
+        insertbackground=WHITE,
+        relief="flat"
+    )
+
+    confirm.pack(
+        fill="x",
+        pady=8,
+        ipady=7
+    )
+
+    def save():
+        p1 = entry.get()
+        p2 = confirm.get()
+
+        if not valid_password(p1):
+            messagebox.showwarning(
+                "Password",
+                "Minimum 6 characters.",
+                parent=window
+            )
+            return
+
+        if p1 != p2:
+            messagebox.showwarning(
+                "Password",
+                "Passwords do not match.",
+                parent=window
+            )
+            return
+
+        accounts = load_user_accounts()
+
+        key = username.lower()
+
+        if key not in accounts:
+            messagebox.showerror(
+                "Error",
+                "Account not found.",
+                parent=window
+            )
+            return
+
+        accounts[key][
+            "password_hash"
+        ] = hash_password(p1)
+
+        save_user_accounts(
+            accounts
+        )
+
+        log_security_event(
+            "USER_PASSWORD_CHANGED",
+            f"Username: {username}"
+        )
+
+        messagebox.showinfo(
+            "Success",
+            "Password changed successfully.",
+            parent=window
+        )
+
+        window.destroy()
+
+    tk.Button(
+        form,
+        text="CHANGE PASSWORD",
+        command=save,
+        bg=GREEN,
+        fg="#07111d",
+        font=("Segoe UI", 10, "bold"),
+        relief="flat",
+        pady=9
+    ).pack(
+        fill="x",
+        pady=15
+    )
 
 
 # ============================================================
-# SECURITY EVENT LOG
+# SECURITY LOG
 # ============================================================
 
 def log_security_event(
@@ -541,16 +810,15 @@ def log_security_event(
                 rows = list(
                     csv.reader(
                         io.StringIO(
-                            data.decode("utf-8")
+                            data.decode(
+                                "utf-8"
+                            )
                         )
                     )
                 )
 
-            except Exception as error:
-                print(
-                    "Existing security log "
-                    f"read error: {error}"
-                )
+            except Exception:
+                rows = []
 
         if not rows:
             rows = [
@@ -577,7 +845,9 @@ def log_security_event(
 
         csv.writer(
             output
-        ).writerows(rows)
+        ).writerows(
+            rows
+        )
 
         write_encrypted_file(
             SECURITY_LOG_FILE,
@@ -587,8 +857,7 @@ def log_security_event(
         )
 
         print(
-            f"[SECURITY LOG] "
-            f"{event_type} | {details}"
+            f"[SECURITY] {event_type} | {details}"
         )
 
     except Exception as error:
@@ -597,1500 +866,6 @@ def log_security_event(
             error
         )
 
-
-# ============================================================
-# PASSWORD AUTHENTICATION
-# ============================================================
-
-def hash_password(password):
-    return hashlib.sha256(
-        password.encode("utf-8")
-    ).hexdigest()
-
-
-ADMIN_PASSWORD_HASH = hash_password(
-    ADMIN_PASSWORD
-)
-
-
-def verify_admin_password(password):
-    return (
-        hash_password(password)
-        == ADMIN_PASSWORD_HASH
-    )
-
-
-# ============================================================
-# FACE ENCODINGS
-# ============================================================
-
-def save_face_encodings(
-    encodings,
-    names
-):
-    payload = pickle.dumps(
-        {
-            "encodings": encodings,
-            "names": names
-        }
-    )
-
-    write_encrypted_file(
-        ENCODINGS_FILE,
-        payload
-    )
-
-
-def load_face_encodings():
-    global known_encodings
-    global known_names
-
-    known_encodings = []
-    known_names = []
-
-    if not os.path.exists(
-        ENCODINGS_FILE
-    ):
-        print(
-            "No encrypted face encodings found."
-        )
-
-        return False
-
-    try:
-        data = read_encrypted_file(
-            ENCODINGS_FILE
-        )
-
-        payload = pickle.loads(
-            data
-        )
-
-        known_encodings = payload.get(
-            "encodings",
-            []
-        )
-
-        known_names = payload.get(
-            "names",
-            []
-        )
-
-        print(
-            f"Loaded "
-            f"{len(known_encodings)} "
-            f"encrypted face encodings."
-        )
-
-        return len(
-            known_encodings
-        ) > 0
-
-    except Exception as error:
-        print(
-            "Encoding load error:",
-            error
-        )
-
-        return False
-
-
-# ============================================================
-# USER STORAGE
-# ============================================================
-
-def get_users():
-    users = []
-
-    if not os.path.isdir(
-        SECURE_FACES_DIR
-    ):
-        return users
-
-    for name in os.listdir(
-        SECURE_FACES_DIR
-    ):
-        path = os.path.join(
-            SECURE_FACES_DIR,
-            name
-        )
-
-        if os.path.isdir(path):
-            users.append(name)
-
-    users.sort(
-        key=str.lower
-    )
-
-    return users
-
-
-def save_face_image_encrypted(
-    user_name,
-    frame,
-    index
-):
-    user_dir = os.path.join(
-        SECURE_FACES_DIR,
-        user_name
-    )
-
-    os.makedirs(
-        user_dir,
-        exist_ok=True
-    )
-
-    success, buffer = cv2.imencode(
-        ".jpg",
-        frame,
-        [
-            cv2.IMWRITE_JPEG_QUALITY,
-            95
-        ]
-    )
-
-    if not success:
-        raise ValueError(
-            "Could not encode face image."
-        )
-
-    filename = (
-        f"face_{index:02d}.jpg.enc"
-    )
-
-    path = os.path.join(
-        user_dir,
-        filename
-    )
-
-    write_encrypted_file(
-        path,
-        buffer.tobytes()
-    )
-
-    return path
-
-
-def decrypt_face_image(path):
-    data = read_encrypted_file(
-        path
-    )
-
-    array = np.frombuffer(
-        data,
-        dtype=np.uint8
-    )
-
-    image = cv2.imdecode(
-        array,
-        cv2.IMREAD_COLOR
-    )
-
-    if image is None:
-        raise ValueError(
-            "Could not decode encrypted face image."
-        )
-
-    return image
-
-
-# ============================================================
-# ENCRYPTED USER PROFILES
-# ============================================================
-
-def load_user_profiles():
-    if not os.path.exists(
-        USER_PROFILES_FILE
-    ):
-        return {}
-
-    try:
-        data = read_encrypted_file(
-            USER_PROFILES_FILE
-        )
-
-        profiles = pickle.loads(
-            data
-        )
-
-        return (
-            profiles
-            if isinstance(
-                profiles,
-                dict
-            )
-            else {}
-        )
-
-    except Exception as error:
-        print(
-            "User profile read error:",
-            error
-        )
-
-        return {}
-
-
-def save_user_profiles(profiles):
-    data = pickle.dumps(
-        profiles,
-        protocol=pickle.HIGHEST_PROTOCOL
-    )
-
-    write_encrypted_file(
-        USER_PROFILES_FILE,
-        data
-    )
-
-
-def save_user_profile(
-    name,
-    profile
-):
-    profiles = load_user_profiles()
-
-    profiles[name] = profile
-
-    save_user_profiles(
-        profiles
-    )
-
-
-def get_user_profile(name):
-    profiles = load_user_profiles()
-
-    return profiles.get(
-        name,
-        {}
-    )
-
-
-def delete_user_profile(name):
-    profiles = load_user_profiles()
-
-    if name in profiles:
-        del profiles[name]
-
-        save_user_profiles(
-            profiles
-        )
-
-
-def collect_user_profile():
-    fields = [
-        ("Full Name", "full_name"),
-        ("Phone", "phone"),
-        ("Email", "email"),
-        ("Department", "department"),
-        ("Role", "role"),
-        ("Notes", "notes"),
-    ]
-
-    result = {}
-
-    window = tk.Toplevel(root)
-
-    window.title(
-        "Register User - Personal Details"
-    )
-
-    window.geometry(
-        "560x530"
-    )
-
-    window.configure(
-        bg=BG
-    )
-
-    window.resizable(
-        False,
-        False
-    )
-
-    window.transient(root)
-    window.grab_set()
-
-    tk.Label(
-        window,
-        text="USER PROFILE",
-        font=("Segoe UI", 20, "bold"),
-        bg=BG,
-        fg=GREEN
-    ).pack(
-        pady=(22, 4)
-    )
-
-    tk.Label(
-        window,
-        text=(
-            "Details will be stored using "
-            "AES-256-GCM encryption."
-        ),
-        font=("Segoe UI", 9),
-        bg=BG,
-        fg=MUTED
-    ).pack(
-        pady=(0, 15)
-    )
-
-    form = tk.Frame(
-        window,
-        bg=CARD,
-        padx=25,
-        pady=20
-    )
-
-    form.pack(
-        fill="both",
-        expand=True,
-        padx=25,
-        pady=(0, 20)
-    )
-
-    entries = {}
-
-    for row, (
-        label_text,
-        key
-    ) in enumerate(fields):
-
-        tk.Label(
-            form,
-            text=label_text,
-            font=("Segoe UI", 10, "bold"),
-            bg=CARD,
-            fg=TEXT
-        ).grid(
-            row=row,
-            column=0,
-            sticky="w",
-            pady=6
-        )
-
-        if key == "notes":
-            widget = tk.Text(
-                form,
-                height=4,
-                width=35,
-                bg=CARD2,
-                fg=WHITE,
-                insertbackground=WHITE,
-                relief="flat"
-            )
-
-        else:
-            widget = tk.Entry(
-                form,
-                width=37,
-                font=("Segoe UI", 10),
-                bg=CARD2,
-                fg=WHITE,
-                insertbackground=WHITE,
-                relief="flat"
-            )
-
-        widget.grid(
-            row=row,
-            column=1,
-            sticky="ew",
-            padx=(15, 0),
-            pady=6,
-            ipady=(
-                5
-                if key != "notes"
-                else 0
-            )
-        )
-
-        entries[key] = widget
-
-    form.columnconfigure(
-        1,
-        weight=1
-    )
-
-    def submit():
-        for key, widget in entries.items():
-
-            if isinstance(
-                widget,
-                tk.Text
-            ):
-                result[key] = widget.get(
-                    "1.0",
-                    "end"
-                ).strip()
-
-            else:
-                result[key] = widget.get().strip()
-
-        if not result["full_name"]:
-            messagebox.showwarning(
-                "Missing Name",
-                "Full Name is required.",
-                parent=window
-            )
-
-            return
-
-        if (
-            result["email"]
-            and (
-                "@"
-                not in result["email"]
-                or "."
-                not in result["email"].split("@")[-1]
-            )
-        ):
-            messagebox.showwarning(
-                "Invalid Email",
-                "Please enter a valid email address.",
-                parent=window
-            )
-
-            return
-
-        result["registered_at"] = (
-            datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
-        )
-
-        result["profile_version"] = 1
-
-        window.destroy()
-
-    def cancel():
-        result.clear()
-        window.destroy()
-
-    buttons = tk.Frame(
-        window,
-        bg=BG
-    )
-
-    buttons.pack(
-        pady=(0, 20)
-    )
-
-    tk.Button(
-        buttons,
-        text="CONTINUE TO FACE CAPTURE",
-        command=submit,
-        bg=GREEN,
-        fg="#07111d",
-        activebackground=GREEN,
-        font=("Segoe UI", 10, "bold"),
-        relief="flat",
-        padx=18,
-        pady=10,
-        cursor="hand2"
-    ).pack(
-        side="left",
-        padx=6
-    )
-
-    tk.Button(
-        buttons,
-        text="CANCEL",
-        command=cancel,
-        bg=CARD2,
-        fg=TEXT,
-        activebackground=CARD2,
-        font=("Segoe UI", 10, "bold"),
-        relief="flat",
-        padx=18,
-        pady=10,
-        cursor="hand2"
-    ).pack(
-        side="left",
-        padx=6
-    )
-
-    root.wait_window(window)
-
-    return result if result else None
-
-
-def view_user_profiles():
-    users = get_users()
-    profiles = load_user_profiles()
-
-    window = tk.Toplevel(root)
-
-    window.title(
-        "Registered User Profiles"
-    )
-
-    window.geometry(
-        "980x650"
-    )
-
-    window.configure(
-        bg=BG
-    )
-
-    tk.Label(
-        window,
-        text="REGISTERED USER PROFILES",
-        font=("Segoe UI", 20, "bold"),
-        bg=BG,
-        fg=GREEN
-    ).pack(
-        pady=(18, 5)
-    )
-
-    tk.Label(
-        window,
-        text=(
-            "Profiles and face images are "
-            "protected by encrypted storage."
-        ),
-        font=("Segoe UI", 9),
-        bg=BG,
-        fg=MUTED
-    ).pack(
-        pady=(0, 12)
-    )
-
-    body = tk.Frame(
-        window,
-        bg=CARD,
-        padx=18,
-        pady=18
-    )
-
-    body.pack(
-        fill="both",
-        expand=True,
-        padx=22,
-        pady=(0, 22)
-    )
-
-    list_frame = tk.Frame(
-        body,
-        bg=CARD
-    )
-
-    list_frame.pack(
-        side="left",
-        fill="y",
-        padx=(0, 18)
-    )
-
-    detail_frame = tk.Frame(
-        body,
-        bg=CARD2,
-        padx=20,
-        pady=20
-    )
-
-    detail_frame.pack(
-        side="left",
-        fill="both",
-        expand=True
-    )
-
-    listbox = tk.Listbox(
-        list_frame,
-        width=28,
-        height=24,
-        bg=CARD2,
-        fg=TEXT,
-        selectbackground=GREEN,
-        selectforeground="#07111d",
-        font=("Segoe UI", 11),
-        relief="flat"
-    )
-
-    listbox.pack(
-        fill="y",
-        expand=True
-    )
-
-    for user in users:
-        listbox.insert(
-            "end",
-            user
-        )
-
-    info = tk.Label(
-        detail_frame,
-        text="Select a registered user.",
-        justify="left",
-        anchor="nw",
-        font=("Segoe UI", 11),
-        bg=CARD2,
-        fg=TEXT
-    )
-
-    info.pack(
-        fill="both",
-        expand=True,
-        anchor="nw"
-    )
-
-    image_label = tk.Label(
-        detail_frame,
-        bg=CARD2
-    )
-
-    image_label.pack(
-        pady=(10, 0)
-    )
-
-    def show_selected(event=None):
-        selection = listbox.curselection()
-
-        if not selection:
-            return
-
-        name = listbox.get(
-            selection[0]
-        )
-
-        profile = profiles.get(
-            name,
-            {}
-        )
-
-        text = (
-            f"Name: "
-            f"{profile.get('full_name', name) or name}\n"
-            f"Phone: "
-            f"{profile.get('phone', 'Not provided')}\n"
-            f"Email: "
-            f"{profile.get('email', 'Not provided')}\n"
-            f"Department: "
-            f"{profile.get('department', 'Not provided')}\n"
-            f"Role: "
-            f"{profile.get('role', 'Not provided')}\n"
-            f"Registered: "
-            f"{profile.get('registered_at', 'Legacy profile / not available')}\n\n"
-            f"Notes:\n"
-            f"{profile.get('notes', 'None') or 'None'}\n\n"
-            "Access: AUTHENTICATED ADMIN"
-        )
-
-        info.config(
-            text=text
-        )
-
-        image_label.config(
-            image=""
-        )
-
-        image_label.image = None
-
-        user_dir = os.path.join(
-            SECURE_FACES_DIR,
-            name
-        )
-
-        encrypted_images = (
-            [
-                os.path.join(
-                    user_dir,
-                    f
-                )
-                for f in sorted(
-                    os.listdir(
-                        user_dir
-                    )
-                )
-                if (
-                    f.lower().endswith(".enc")
-                    and f.lower().startswith("face_")
-                )
-            ]
-            if os.path.isdir(user_dir)
-            else []
-        )
-
-        if encrypted_images:
-            try:
-                image = decrypt_face_image(
-                    encrypted_images[0]
-                )
-
-                image = cv2.cvtColor(
-                    image,
-                    cv2.COLOR_BGR2RGB
-                )
-
-                pil_image = Image.fromarray(
-                    image
-                )
-
-                pil_image.thumbnail(
-                    (300, 220)
-                )
-
-                photo = ImageTk.PhotoImage(
-                    pil_image
-                )
-
-                image_label.config(
-                    image=photo
-                )
-
-                image_label.image = photo
-
-            except Exception as error:
-                print(
-                    "Profile image display error:",
-                    error
-                )
-
-    listbox.bind(
-        "<<ListboxSelect>>",
-        show_selected
-    )
-
-    if users:
-        listbox.selection_set(0)
-        show_selected()
-
-    else:
-        info.config(
-            text="No registered users."
-        )
-
-
-# ============================================================
-# CAMERA
-# ============================================================
-
-def open_camera():
-    attempts = []
-
-    if hasattr(
-        cv2,
-        "CAP_DSHOW"
-    ):
-        attempts.append(
-            cv2.CAP_DSHOW
-        )
-
-    if hasattr(
-        cv2,
-        "CAP_MSMF"
-    ):
-        attempts.append(
-            cv2.CAP_MSMF
-        )
-
-    attempts.append(
-        cv2.CAP_ANY
-    )
-
-    for backend in attempts:
-        try:
-            cap = cv2.VideoCapture(
-                0,
-                backend
-            )
-
-            if cap.isOpened():
-                cap.set(
-                    cv2.CAP_PROP_FRAME_WIDTH,
-                    640
-                )
-
-                cap.set(
-                    cv2.CAP_PROP_FRAME_HEIGHT,
-                    480
-                )
-
-                cap.set(
-                    cv2.CAP_PROP_FPS,
-                    30
-                )
-
-                print(
-                    f"Camera opened with backend: "
-                    f"{backend}"
-                )
-
-                return cap
-
-            cap.release()
-
-        except Exception as error:
-            print(
-                "Camera backend error:",
-                error
-            )
-
-    return None
-
-
-# ============================================================
-# REGISTER USER
-# ============================================================
-
-def capture_user_faces(
-    user_name,
-    number_of_images=5
-):
-    cap = open_camera()
-
-    if cap is None:
-        messagebox.showerror(
-            "Camera Error",
-            "Could not open the camera."
-        )
-
-        return False
-
-    captured = 0
-    cancelled = False
-
-    window_title = (
-        "Register Face - "
-        "SPACE = Capture | ESC = Cancel"
-    )
-
-    print(
-        "Face registration started."
-    )
-
-    try:
-        while captured < number_of_images:
-            ret, frame = cap.read()
-
-            if not ret:
-                continue
-
-            frame = cv2.flip(
-                frame,
-                1
-            )
-
-            preview = frame.copy()
-
-            cv2.putText(
-                preview,
-                f"User: {user_name}",
-                (15, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.75,
-                (0, 255, 255),
-                2
-            )
-
-            cv2.putText(
-                preview,
-                f"Captured: "
-                f"{captured}/{number_of_images}",
-                (15, 60),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (0, 255, 0),
-                2
-            )
-
-            cv2.putText(
-                preview,
-                "Look at camera and press SPACE",
-                (15, 450),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (255, 255, 255),
-                2
-            )
-
-            cv2.imshow(
-                window_title,
-                preview
-            )
-
-            key = cv2.waitKey(1) & 0xFF
-
-            if key == 27:
-                cancelled = True
-                break
-
-            if key == 32:
-                rgb = cv2.cvtColor(
-                    frame,
-                    cv2.COLOR_BGR2RGB
-                )
-
-                locations = (
-                    face_recognition.face_locations(
-                        rgb,
-                        model="hog"
-                    )
-                )
-
-                if len(locations) == 0:
-                    print(
-                        "No face detected."
-                    )
-
-                    continue
-
-                if len(locations) > 1:
-                    print(
-                        "Multiple faces detected. "
-                        "Only one face allowed."
-                    )
-
-                    continue
-
-                captured += 1
-
-                save_face_image_encrypted(
-                    user_name,
-                    frame,
-                    captured
-                )
-
-                print(
-                    f"Encrypted face image "
-                    f"{captured}/{number_of_images} saved."
-                )
-
-                time.sleep(
-                    0.25
-                )
-
-    finally:
-        cap.release()
-
-        cv2.destroyAllWindows()
-
-    if cancelled:
-        user_dir = os.path.join(
-            SECURE_FACES_DIR,
-            user_name
-        )
-
-        try:
-            if os.path.isdir(
-                user_dir
-            ):
-                for filename in os.listdir(
-                    user_dir
-                ):
-                    os.remove(
-                        os.path.join(
-                            user_dir,
-                            filename
-                        )
-                    )
-
-                os.rmdir(
-                    user_dir
-                )
-
-        except Exception:
-            pass
-
-        print(
-            "Registration cancelled."
-        )
-
-        return False
-
-    return (
-        captured
-        == number_of_images
-    )
-
-
-def train_face_encodings():
-    global known_encodings
-    global known_names
-
-    new_encodings = []
-    new_names = []
-
-    print(
-        "Training encrypted face database..."
-    )
-
-    for user_name in get_users():
-        user_dir = os.path.join(
-            SECURE_FACES_DIR,
-            user_name
-        )
-
-        for filename in sorted(
-            os.listdir(user_dir)
-        ):
-            if not filename.lower().endswith(
-                ".enc"
-            ):
-                continue
-
-            path = os.path.join(
-                user_dir,
-                filename
-            )
-
-            try:
-                image = decrypt_face_image(
-                    path
-                )
-
-                rgb = cv2.cvtColor(
-                    image,
-                    cv2.COLOR_BGR2RGB
-                )
-
-                locations = (
-                    face_recognition.face_locations(
-                        rgb,
-                        model="hog"
-                    )
-                )
-
-                encodings = (
-                    face_recognition.face_encodings(
-                        rgb,
-                        locations
-                    )
-                )
-
-                for encoding in encodings:
-                    new_encodings.append(
-                        encoding
-                    )
-
-                    new_names.append(
-                        user_name
-                    )
-
-            except Exception as error:
-                print(
-                    f"Training error: "
-                    f"{path} | {error}"
-                )
-
-    save_face_encodings(
-        new_encodings,
-        new_names
-    )
-
-    known_encodings = new_encodings
-    known_names = new_names
-
-    print(
-        f"Training complete. "
-        f"{len(new_encodings)} encodings."
-    )
-
-    return len(
-        new_encodings
-    )
-
-
-def register_user():
-    profile = collect_user_profile()
-
-    if not profile:
-        return
-
-    name = safe_user_name(
-        profile.get(
-            "full_name",
-            ""
-        )
-    )
-
-    if not name:
-        messagebox.showwarning(
-            "Invalid Name",
-            "Please enter a valid user name."
-        )
-
-        return
-
-    if name.lower() in [
-        user.lower()
-        for user in get_users()
-    ]:
-        messagebox.showwarning(
-            "User Exists",
-            "This user is already registered."
-        )
-
-        return
-
-    profile["full_name"] = name
-
-    success = capture_user_faces(
-        name
-    )
-
-    if not success:
-        return
-
-    count = train_face_encodings()
-
-    if count > 0:
-        try:
-            save_user_profile(
-                name,
-                profile
-            )
-
-            log_security_event(
-                "USER_REGISTERED",
-                (
-                    f"User: {name} | "
-                    "Encrypted profile created"
-                )
-            )
-
-            messagebox.showinfo(
-                "Registration Complete",
-                (
-                    f"{name} registered successfully.\n\n"
-                    "Face data and personal profile "
-                    "are encrypted."
-                )
-            )
-
-            refresh_dashboard()
-
-        except Exception as error:
-            try:
-                user_dir = os.path.join(
-                    SECURE_FACES_DIR,
-                    name
-                )
-
-                if os.path.isdir(
-                    user_dir
-                ):
-                    for filename in os.listdir(
-                        user_dir
-                    ):
-                        path = os.path.join(
-                            user_dir,
-                            filename
-                        )
-
-                        if os.path.isfile(path):
-                            os.remove(path)
-
-                    os.rmdir(
-                        user_dir
-                    )
-
-                train_face_encodings()
-
-            except Exception:
-                pass
-
-            messagebox.showerror(
-                "Profile Save Error",
-                str(error)
-            )
-
-    else:
-        messagebox.showerror(
-            "Training Failed",
-            "No valid face encoding was created."
-        )
-
-
-# ============================================================
-# DELETE USER
-# ============================================================
-
-def delete_user():
-    users = get_users()
-
-    if not users:
-        messagebox.showinfo(
-            "Delete User",
-            "No registered users."
-        )
-
-        return
-
-    user_list = "\n".join(
-        f"{index + 1}. {name}"
-        for index, name in enumerate(users)
-    )
-
-    name = simpledialog.askstring(
-        "Delete User",
-        (
-            "Registered users:\n\n"
-            + user_list
-            + "\n\nEnter exact user name to delete:"
-        ),
-        parent=root
-    )
-
-    if name is None:
-        return
-
-    selected = None
-
-    for user in users:
-        if user.lower() == name.strip().lower():
-            selected = user
-            break
-
-    if selected is None:
-        messagebox.showerror(
-            "Delete User",
-            "User not found."
-        )
-
-        return
-
-    confirm = messagebox.askyesno(
-        "Confirm Delete",
-        (
-            f"Delete user '{selected}' "
-            "and encrypted face data?"
-        )
-    )
-
-    if not confirm:
-        return
-
-    user_dir = os.path.join(
-        SECURE_FACES_DIR,
-        selected
-    )
-
-    try:
-        for filename in os.listdir(
-            user_dir
-        ):
-            path = os.path.join(
-                user_dir,
-                filename
-            )
-
-            if os.path.isfile(path):
-                os.remove(path)
-
-        os.rmdir(
-            user_dir
-        )
-
-        delete_user_profile(
-            selected
-        )
-
-        train_face_encodings()
-
-        log_security_event(
-            "USER_DELETED",
-            f"User: {selected}"
-        )
-
-        messagebox.showinfo(
-            "Deleted",
-            f"{selected} deleted successfully."
-        )
-
-        refresh_dashboard()
-
-    except Exception as error:
-        messagebox.showerror(
-            "Delete Error",
-            str(error)
-        )
-
-
-# ============================================================
-# ATTENDANCE
-# ============================================================
-
-def read_attendance_rows():
-    if not os.path.exists(
-        ATTENDANCE_FILE
-    ):
-        return []
-
-    try:
-        data = read_encrypted_file(
-            ATTENDANCE_FILE
-        )
-
-        return list(
-            csv.reader(
-                io.StringIO(
-                    data.decode("utf-8")
-                )
-            )
-        )
-
-    except Exception as error:
-        print(
-            "Attendance read error:",
-            error
-        )
-
-        return []
-
-
-def write_attendance_rows(rows):
-    output = io.StringIO(
-        newline=""
-    )
-
-    writer = csv.writer(
-        output
-    )
-
-    writer.writerows(rows)
-
-    write_encrypted_file(
-        ATTENDANCE_FILE,
-        output.getvalue().encode(
-            "utf-8"
-        )
-    )
-
-
-def mark_attendance(name):
-    now = datetime.now()
-
-    today = now.strftime(
-        "%Y-%m-%d"
-    )
-
-    current_time = now.strftime(
-        "%H:%M:%S"
-    )
-
-    rows = read_attendance_rows()
-
-    if not rows:
-        rows = [
-            [
-                "Name",
-                "Date",
-                "Time"
-            ]
-        ]
-
-    for row in rows[1:]:
-        if len(row) >= 2:
-            if (
-                row[0].strip().lower()
-                == name.strip().lower()
-                and row[1].strip()
-                == today
-            ):
-                return False
-
-    rows.append(
-        [
-            name,
-            today,
-            current_time
-        ]
-    )
-
-    try:
-        write_attendance_rows(
-            rows
-        )
-
-        print(
-            f"ATTENDANCE MARKED: "
-            f"{name} | "
-            f"{today} | "
-            f"{current_time}"
-        )
-
-        log_security_event(
-            "ATTENDANCE_MARKED",
-            (
-                f"Name: {name} | "
-                f"Date: {today} | "
-                f"Time: {current_time}"
-            )
-        )
-
-        return True
-
-    except Exception as error:
-        print(
-            "Attendance write error:",
-            error
-        )
-
-        return False
-
-
-def view_attendance():
-    rows = read_attendance_rows()
-
-    window = tk.Toplevel(root)
-
-    window.title(
-        "Attendance History"
-    )
-
-    window.geometry(
-        "720x480"
-    )
-
-    window.configure(
-        bg=BG
-    )
-
-    tk.Label(
-        window,
-        text="ATTENDANCE HISTORY",
-        font=("Segoe UI", 18, "bold"),
-        bg=BG,
-        fg=GREEN
-    ).pack(
-        pady=15
-    )
-
-    text_box = tk.Text(
-        window,
-        bg=CARD,
-        fg=TEXT,
-        insertbackground=WHITE,
-        font=("Consolas", 11),
-        relief="flat"
-    )
-
-    text_box.pack(
-        fill="both",
-        expand=True,
-        padx=20,
-        pady=10
-    )
-
-    if not rows:
-        text_box.insert(
-            "end",
-            "No attendance records."
-        )
-
-    else:
-        for row in rows:
-            text_box.insert(
-                "end",
-                " | ".join(row)
-                + "\n"
-            )
-
-    text_box.config(
-        state="disabled"
-    )
-
-
-# ============================================================
-# SECURITY LOG VIEWER
-# ============================================================
 
 def read_security_log_rows():
     if not os.path.exists(
@@ -2130,7 +905,7 @@ def view_security_log():
     )
 
     window.geometry(
-        "900x520"
+        "950x550"
     )
 
     window.configure(
@@ -2140,23 +915,22 @@ def view_security_log():
     tk.Label(
         window,
         text="SECURITY EVENT LOG",
-        font=("Segoe UI", 18, "bold"),
+        font=("Segoe UI", 20, "bold"),
         bg=BG,
         fg=RED
     ).pack(
         pady=15
     )
 
-    text_box = tk.Text(
+    box = tk.Text(
         window,
         bg=CARD,
         fg=TEXT,
-        insertbackground=WHITE,
         font=("Consolas", 10),
         relief="flat"
     )
 
-    text_box.pack(
+    box.pack(
         fill="both",
         expand=True,
         padx=20,
@@ -2164,20 +938,1381 @@ def view_security_log():
     )
 
     if not rows:
-        text_box.insert(
+        box.insert(
             "end",
             "No security events."
         )
-
     else:
         for row in rows:
-            text_box.insert(
+            box.insert(
                 "end",
                 " | ".join(row)
                 + "\n"
             )
 
-    text_box.config(
+    box.config(
+        state="disabled"
+    )
+
+
+# ============================================================
+# FACE ENCODINGS
+# ============================================================
+
+def save_face_encodings(
+    encodings,
+    names
+):
+    data = pickle.dumps(
+        {
+            "encodings": encodings,
+            "names": names
+        },
+        protocol=pickle.HIGHEST_PROTOCOL
+    )
+
+    write_encrypted_file(
+        ENCODINGS_FILE,
+        data
+    )
+
+
+def load_face_encodings():
+    global known_encodings
+    global known_names
+
+    known_encodings = []
+    known_names = []
+
+    if not os.path.exists(
+        ENCODINGS_FILE
+    ):
+        return False
+
+    try:
+        data = read_encrypted_file(
+            ENCODINGS_FILE
+        )
+
+        payload = pickle.loads(
+            data
+        )
+
+        known_encodings = payload.get(
+            "encodings",
+            []
+        )
+
+        known_names = payload.get(
+            "names",
+            []
+        )
+
+        print(
+            f"Loaded {len(known_encodings)} "
+            "encrypted face encodings."
+        )
+
+        return bool(
+            known_encodings
+        )
+
+    except Exception as error:
+        print(
+            "Encoding load error:",
+            error
+        )
+
+        return False
+
+
+# ============================================================
+# USER PROFILE STORAGE
+# ============================================================
+
+def load_user_profiles():
+    if not os.path.exists(
+        USER_PROFILES_FILE
+    ):
+        return {}
+
+    try:
+        data = read_encrypted_file(
+            USER_PROFILES_FILE
+        )
+
+        result = pickle.loads(
+            data
+        )
+
+        return (
+            result
+            if isinstance(result, dict)
+            else {}
+        )
+
+    except Exception as error:
+        print(
+            "Profile load error:",
+            error
+        )
+
+        return {}
+
+
+def save_user_profiles(
+    profiles
+):
+    write_encrypted_file(
+        USER_PROFILES_FILE,
+        pickle.dumps(
+            profiles,
+            protocol=pickle.HIGHEST_PROTOCOL
+        )
+    )
+
+
+def save_user_profile(
+    name,
+    profile
+):
+    profiles = load_user_profiles()
+
+    profiles[name] = profile
+
+    save_user_profiles(
+        profiles
+    )
+
+
+def delete_user_profile(
+    name
+):
+    profiles = load_user_profiles()
+
+    if name in profiles:
+        del profiles[name]
+
+        save_user_profiles(
+            profiles
+        )
+
+
+# ============================================================
+# USER LIST
+# ============================================================
+
+def get_users():
+    if not os.path.isdir(
+        SECURE_FACES_DIR
+    ):
+        return []
+
+    users = []
+
+    for name in os.listdir(
+        SECURE_FACES_DIR
+    ):
+        path = os.path.join(
+            SECURE_FACES_DIR,
+            name
+        )
+
+        if os.path.isdir(path):
+            users.append(name)
+
+    return sorted(
+        users,
+        key=str.lower
+    )
+
+
+def safe_user_name(name):
+    name = str(
+        name
+    ).strip()
+
+    name = re.sub(
+        r'[<>:"/\\|?*]',
+        "_",
+        name
+    )
+
+    name = re.sub(
+        r"\s+",
+        " ",
+        name
+    ).strip()
+
+    if name in {
+        "",
+        ".",
+        ".."
+    }:
+        return ""
+
+    return name[:80]
+
+
+# ============================================================
+# USER PROFILE FORM
+# ============================================================
+
+def collect_user_profile():
+    fields = [
+        ("Full Name", "full_name"),
+        ("Phone", "phone"),
+        ("Email", "email"),
+        ("Department", "department"),
+        ("Role", "role"),
+        ("Notes", "notes"),
+    ]
+
+    result = {}
+
+    window = tk.Toplevel(root)
+
+    window.title(
+        "Register User"
+    )
+
+    window.geometry(
+        "580x570"
+    )
+
+    window.configure(
+        bg=BG
+    )
+
+    window.transient(root)
+    window.grab_set()
+
+    tk.Label(
+        window,
+        text="USER PROFILE",
+        font=("Segoe UI", 22, "bold"),
+        bg=BG,
+        fg=GREEN
+    ).pack(
+        pady=(20, 5)
+    )
+
+    tk.Label(
+        window,
+        text="AES-256-GCM encrypted profile",
+        font=("Segoe UI", 9),
+        bg=BG,
+        fg=MUTED
+    ).pack(
+        pady=(0, 15)
+    )
+
+    form = tk.Frame(
+        window,
+        bg=CARD,
+        padx=25,
+        pady=20
+    )
+
+    form.pack(
+        fill="both",
+        expand=True,
+        padx=25,
+        pady=(0, 20)
+    )
+
+    entries = {}
+
+    for row, (
+        label,
+        key
+    ) in enumerate(fields):
+
+        tk.Label(
+            form,
+            text=label,
+            font=("Segoe UI", 10, "bold"),
+            bg=CARD,
+            fg=TEXT
+        ).grid(
+            row=row,
+            column=0,
+            sticky="w",
+            pady=6
+        )
+
+        if key == "notes":
+            widget = tk.Text(
+                form,
+                height=4,
+                width=38,
+                bg=CARD2,
+                fg=WHITE,
+                insertbackground=WHITE,
+                relief="flat"
+            )
+        else:
+            widget = tk.Entry(
+                form,
+                bg=CARD2,
+                fg=WHITE,
+                insertbackground=WHITE,
+                relief="flat",
+                font=("Segoe UI", 10)
+            )
+
+        widget.grid(
+            row=row,
+            column=1,
+            sticky="ew",
+            padx=(15, 0),
+            pady=6,
+            ipady=6
+        )
+
+        entries[key] = widget
+
+    form.columnconfigure(
+        1,
+        weight=1
+    )
+
+    def submit():
+        result.clear()
+
+        for key, widget in entries.items():
+
+            if isinstance(
+                widget,
+                tk.Text
+            ):
+                result[key] = widget.get(
+                    "1.0",
+                    "end"
+                ).strip()
+            else:
+                result[key] = widget.get().strip()
+
+        if not result.get(
+            "full_name"
+        ):
+            messagebox.showwarning(
+                "Missing Name",
+                "Full Name is required.",
+                parent=window
+            )
+            return
+
+        email = result.get(
+            "email",
+            ""
+        )
+
+        if email and (
+            "@" not in email
+            or "." not in email.split("@")[-1]
+        ):
+            messagebox.showwarning(
+                "Email",
+                "Enter a valid email address.",
+                parent=window
+            )
+            return
+
+        result[
+            "registered_at"
+        ] = datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+        result[
+            "profile_version"
+        ] = 1
+
+        window.destroy()
+
+    def cancel():
+        result.clear()
+        window.destroy()
+
+    buttons = tk.Frame(
+        window,
+        bg=BG
+    )
+
+    buttons.pack(
+        pady=(0, 20)
+    )
+
+    tk.Button(
+        buttons,
+        text="CONTINUE TO FACE CAPTURE",
+        command=submit,
+        bg=GREEN,
+        fg="#07111d",
+        font=("Segoe UI", 10, "bold"),
+        relief="flat",
+        padx=18,
+        pady=10
+    ).pack(
+        side="left",
+        padx=5
+    )
+
+    tk.Button(
+        buttons,
+        text="CANCEL",
+        command=cancel,
+        bg=CARD2,
+        fg=TEXT,
+        font=("Segoe UI", 10, "bold"),
+        relief="flat",
+        padx=18,
+        pady=10
+    ).pack(
+        side="left",
+        padx=5
+    )
+
+    root.wait_window(
+        window
+    )
+
+    return result or None
+
+
+# ============================================================
+# CAMERA
+# ============================================================
+
+def open_camera():
+    backends = []
+
+    if hasattr(
+        cv2,
+        "CAP_DSHOW"
+    ):
+        backends.append(
+            cv2.CAP_DSHOW
+        )
+
+    if hasattr(
+        cv2,
+        "CAP_MSMF"
+    ):
+        backends.append(
+            cv2.CAP_MSMF
+        )
+
+    backends.append(
+        cv2.CAP_ANY
+    )
+
+    for backend in backends:
+        try:
+            cap = cv2.VideoCapture(
+                0,
+                backend
+            )
+
+            if cap.isOpened():
+                cap.set(
+                    cv2.CAP_PROP_FRAME_WIDTH,
+                    640
+                )
+
+                cap.set(
+                    cv2.CAP_PROP_FRAME_HEIGHT,
+                    480
+                )
+
+                cap.set(
+                    cv2.CAP_PROP_FPS,
+                    30
+                )
+
+                return cap
+
+            cap.release()
+
+        except Exception as error:
+            print(
+                "Camera error:",
+                error
+            )
+
+    return None
+
+
+# ============================================================
+# FACE CAPTURE
+# ============================================================
+
+def save_face_image_encrypted(
+    user_name,
+    frame,
+    index
+):
+    user_dir = os.path.join(
+        SECURE_FACES_DIR,
+        user_name
+    )
+
+    os.makedirs(
+        user_dir,
+        exist_ok=True
+    )
+
+    success, buffer = cv2.imencode(
+        ".jpg",
+        frame,
+        [
+            cv2.IMWRITE_JPEG_QUALITY,
+            95
+        ]
+    )
+
+    if not success:
+        raise ValueError(
+            "Could not encode image."
+        )
+
+    path = os.path.join(
+        user_dir,
+        f"face_{index:02d}.jpg.enc"
+    )
+
+    write_encrypted_file(
+        path,
+        buffer.tobytes()
+    )
+
+    return path
+
+
+def decrypt_face_image(path):
+    data = read_encrypted_file(
+        path
+    )
+
+    array = np.frombuffer(
+        data,
+        dtype=np.uint8
+    )
+
+    image = cv2.imdecode(
+        array,
+        cv2.IMREAD_COLOR
+    )
+
+    if image is None:
+        raise ValueError(
+            "Invalid encrypted image."
+        )
+
+    return image
+
+
+def capture_user_faces(
+    user_name,
+    number_of_images=5
+):
+    cap = open_camera()
+
+    if cap is None:
+        messagebox.showerror(
+            "Camera",
+            "Could not open camera."
+        )
+        return False
+
+    captured = 0
+    cancelled = False
+
+    title = (
+        "Register Face - "
+        "SPACE = Capture | ESC = Cancel"
+    )
+
+    try:
+        while captured < number_of_images:
+            ret, frame = cap.read()
+
+            if not ret:
+                continue
+
+            frame = cv2.flip(
+                frame,
+                1
+            )
+
+            preview = frame.copy()
+
+            cv2.putText(
+                preview,
+                f"User: {user_name}",
+                (15, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.75,
+                (0, 255, 255),
+                2
+            )
+
+            cv2.putText(
+                preview,
+                f"Captured: {captured}/{number_of_images}",
+                (15, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                (0, 255, 0),
+                2
+            )
+
+            cv2.putText(
+                preview,
+                "Look at camera and press SPACE",
+                (15, 450),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                (255, 255, 255),
+                2
+            )
+
+            cv2.imshow(
+                title,
+                preview
+            )
+
+            key = cv2.waitKey(
+                1
+            ) & 0xFF
+
+            if key == 27:
+                cancelled = True
+                break
+
+            if key == 32:
+                rgb = cv2.cvtColor(
+                    frame,
+                    cv2.COLOR_BGR2RGB
+                )
+
+                locations = face_recognition.face_locations(
+                    rgb,
+                    model="hog"
+                )
+
+                if len(locations) == 0:
+                    print(
+                        "No face detected."
+                    )
+                    continue
+
+                if len(locations) > 1:
+                    print(
+                        "Multiple faces detected."
+                    )
+                    continue
+
+                captured += 1
+
+                save_face_image_encrypted(
+                    user_name,
+                    frame,
+                    captured
+                )
+
+                time.sleep(
+                    0.25
+                )
+
+    finally:
+        cap.release()
+
+        cv2.destroyAllWindows()
+
+    if cancelled:
+        user_dir = os.path.join(
+            SECURE_FACES_DIR,
+            user_name
+        )
+
+        try:
+            if os.path.isdir(
+                user_dir
+            ):
+                for file in os.listdir(
+                    user_dir
+                ):
+                    os.remove(
+                        os.path.join(
+                            user_dir,
+                            file
+                        )
+                    )
+
+                os.rmdir(
+                    user_dir
+                )
+
+        except Exception:
+            pass
+
+        return False
+
+    return captured == number_of_images
+
+
+# ============================================================
+# FACE TRAINING
+# ============================================================
+
+def train_face_encodings():
+    global known_encodings
+    global known_names
+
+    encodings = []
+    names = []
+
+    print(
+        "Training face database..."
+    )
+
+    for user_name in get_users():
+
+        user_dir = os.path.join(
+            SECURE_FACES_DIR,
+            user_name
+        )
+
+        for filename in sorted(
+            os.listdir(user_dir)
+        ):
+
+            if not filename.lower().endswith(
+                ".enc"
+            ):
+                continue
+
+            path = os.path.join(
+                user_dir,
+                filename
+            )
+
+            try:
+                image = decrypt_face_image(
+                    path
+                )
+
+                rgb = cv2.cvtColor(
+                    image,
+                    cv2.COLOR_BGR2RGB
+                )
+
+                locations = face_recognition.face_locations(
+                    rgb,
+                    model="hog"
+                )
+
+                face_encodings = face_recognition.face_encodings(
+                    rgb,
+                    locations
+                )
+
+                for encoding in face_encodings:
+                    encodings.append(
+                        encoding
+                    )
+
+                    names.append(
+                        user_name
+                    )
+
+            except Exception as error:
+                print(
+                    "Training error:",
+                    error
+                )
+
+    save_face_encodings(
+        encodings,
+        names
+    )
+
+    known_encodings = encodings
+    known_names = names
+
+    print(
+        f"Training complete: "
+        f"{len(encodings)} encodings."
+    )
+
+    return len(encodings)
+
+
+# ============================================================
+# REGISTER USER
+# ============================================================
+
+def register_user():
+    profile = collect_user_profile()
+
+    if not profile:
+        return
+
+    name = safe_user_name(
+        profile.get(
+            "full_name",
+            ""
+        )
+    )
+
+    if not name:
+        messagebox.showwarning(
+            "Name",
+            "Invalid name."
+        )
+        return
+
+    existing = [
+        user.lower()
+        for user in get_users()
+    ]
+
+    if name.lower() in existing:
+        messagebox.showwarning(
+            "User Exists",
+            "This user is already registered."
+        )
+        return
+
+    profile[
+        "full_name"
+    ] = name
+
+    success = capture_user_faces(
+        name
+    )
+
+    if not success:
+        return
+
+    count = train_face_encodings()
+
+    if count <= 0:
+        messagebox.showerror(
+            "Training",
+            "No valid face encoding created."
+        )
+        return
+
+    try:
+        save_user_profile(
+            name,
+            profile
+        )
+
+        log_security_event(
+            "FACE_USER_REGISTERED",
+            f"User: {name}"
+        )
+
+        messagebox.showinfo(
+            "Registration Complete",
+            (
+                f"{name} registered successfully.\n\n"
+                "Face images and profile are encrypted."
+            )
+        )
+
+        refresh_dashboard()
+
+    except Exception as error:
+        messagebox.showerror(
+            "Registration Error",
+            str(error)
+        )
+
+
+# ============================================================
+# DELETE USER
+# ============================================================
+
+def delete_user():
+    users = get_users()
+
+    if not users:
+        messagebox.showinfo(
+            "Delete",
+            "No registered users."
+        )
+        return
+
+    text = "\n".join(
+        f"{i + 1}. {name}"
+        for i, name in enumerate(users)
+    )
+
+    name = simpledialog.askstring(
+        "Delete User",
+        (
+            "Registered users:\n\n"
+            + text
+            + "\n\nEnter user name:"
+        ),
+        parent=root
+    )
+
+    if not name:
+        return
+
+    selected = None
+
+    for user in users:
+        if user.lower() == name.strip().lower():
+            selected = user
+            break
+
+    if selected is None:
+        messagebox.showerror(
+            "Delete",
+            "User not found."
+        )
+        return
+
+    if not messagebox.askyesno(
+        "Confirm",
+        f"Delete '{selected}' and all face data?"
+    ):
+        return
+
+    try:
+        user_dir = os.path.join(
+            SECURE_FACES_DIR,
+            selected
+        )
+
+        if os.path.isdir(
+            user_dir
+        ):
+            for filename in os.listdir(
+                user_dir
+            ):
+                path = os.path.join(
+                    user_dir,
+                    filename
+                )
+
+                if os.path.isfile(path):
+                    os.remove(path)
+
+            os.rmdir(
+                user_dir
+            )
+
+        delete_user_profile(
+            selected
+        )
+
+        train_face_encodings()
+
+        log_security_event(
+            "FACE_USER_DELETED",
+            f"User: {selected}"
+        )
+
+        messagebox.showinfo(
+            "Deleted",
+            f"{selected} deleted successfully."
+        )
+
+        refresh_dashboard()
+
+    except Exception as error:
+        messagebox.showerror(
+            "Delete Error",
+            str(error)
+        )
+
+
+# ============================================================
+# USER PROFILE VIEWER
+# ============================================================
+
+def view_user_profiles():
+    users = get_users()
+    profiles = load_user_profiles()
+
+    window = tk.Toplevel(root)
+
+    window.title(
+        "Registered User Profiles"
+    )
+
+    window.geometry(
+        "1000x680"
+    )
+
+    window.configure(
+        bg=BG
+    )
+
+    tk.Label(
+        window,
+        text="REGISTERED USER PROFILES",
+        font=("Segoe UI", 20, "bold"),
+        bg=BG,
+        fg=GREEN
+    ).pack(
+        pady=18
+    )
+
+    body = tk.Frame(
+        window,
+        bg=CARD,
+        padx=18,
+        pady=18
+    )
+
+    body.pack(
+        fill="both",
+        expand=True,
+        padx=22,
+        pady=(0, 22)
+    )
+
+    left = tk.Frame(
+        body,
+        bg=CARD
+    )
+
+    left.pack(
+        side="left",
+        fill="y",
+        padx=(0, 18)
+    )
+
+    right = tk.Frame(
+        body,
+        bg=CARD2,
+        padx=20,
+        pady=20
+    )
+
+    right.pack(
+        side="left",
+        fill="both",
+        expand=True
+    )
+
+    listbox = tk.Listbox(
+        left,
+        width=28,
+        height=25,
+        bg=CARD2,
+        fg=TEXT,
+        selectbackground=GREEN,
+        selectforeground="#07111d",
+        font=("Segoe UI", 11),
+        relief="flat"
+    )
+
+    listbox.pack(
+        fill="y"
+    )
+
+    for user in users:
+        listbox.insert(
+            "end",
+            user
+        )
+
+    info = tk.Label(
+        right,
+        text="Select a user.",
+        justify="left",
+        anchor="nw",
+        bg=CARD2,
+        fg=TEXT,
+        font=("Segoe UI", 11)
+    )
+
+    info.pack(
+        fill="both",
+        expand=True
+    )
+
+    image_label = tk.Label(
+        right,
+        bg=CARD2
+    )
+
+    image_label.pack()
+
+    def show_selected(event=None):
+        selection = listbox.curselection()
+
+        if not selection:
+            return
+
+        name = listbox.get(
+            selection[0]
+        )
+
+        profile = profiles.get(
+            name,
+            {}
+        )
+
+        info.config(
+            text=(
+                f"Name: {profile.get('full_name', name)}\n"
+                f"Phone: {profile.get('phone', 'Not provided')}\n"
+                f"Email: {profile.get('email', 'Not provided')}\n"
+                f"Department: {profile.get('department', 'Not provided')}\n"
+                f"Role: {profile.get('role', 'Not provided')}\n"
+                f"Registered: {profile.get('registered_at', 'Legacy')}\n\n"
+                f"Notes:\n{profile.get('notes', 'None') or 'None'}\n\n"
+                "Access: AUTHENTICATED ADMIN"
+            )
+        )
+
+        image_label.config(
+            image=""
+        )
+
+        image_label.image = None
+
+        user_dir = os.path.join(
+            SECURE_FACES_DIR,
+            name
+        )
+
+        if not os.path.isdir(
+            user_dir
+        ):
+            return
+
+        files = [
+            os.path.join(
+                user_dir,
+                f
+            )
+            for f in sorted(
+                os.listdir(
+                    user_dir
+                )
+            )
+            if f.startswith("face_")
+            and f.endswith(".enc")
+        ]
+
+        if not files:
+            return
+
+        try:
+            image = decrypt_face_image(
+                files[0]
+            )
+
+            image = cv2.cvtColor(
+                image,
+                cv2.COLOR_BGR2RGB
+            )
+
+            pil = Image.fromarray(
+                image
+            )
+
+            pil.thumbnail(
+                (320, 230)
+            )
+
+            photo = ImageTk.PhotoImage(
+                pil
+            )
+
+            image_label.config(
+                image=photo
+            )
+
+            image_label.image = photo
+
+        except Exception as error:
+            print(
+                "Profile image error:",
+                error
+            )
+
+    listbox.bind(
+        "<<ListboxSelect>>",
+        show_selected
+    )
+
+    if users:
+        listbox.selection_set(0)
+        show_selected()
+
+
+# ============================================================
+# ATTENDANCE
+# ============================================================
+
+def read_attendance_rows():
+    if not os.path.exists(
+        ATTENDANCE_FILE
+    ):
+        return []
+
+    try:
+        data = read_encrypted_file(
+            ATTENDANCE_FILE
+        )
+
+        return list(
+            csv.reader(
+                io.StringIO(
+                    data.decode("utf-8")
+                )
+            )
+        )
+
+    except Exception:
+        return []
+
+
+def write_attendance_rows(
+    rows
+):
+    output = io.StringIO(
+        newline=""
+    )
+
+    csv.writer(
+        output
+    ).writerows(
+        rows
+    )
+
+    write_encrypted_file(
+        ATTENDANCE_FILE,
+        output.getvalue().encode(
+            "utf-8"
+        )
+    )
+
+
+def mark_attendance(name):
+    now = datetime.now()
+
+    today = now.strftime(
+        "%Y-%m-%d"
+    )
+
+    current_time = now.strftime(
+        "%H:%M:%S"
+    )
+
+    rows = read_attendance_rows()
+
+    if not rows:
+        rows = [
+            [
+                "Name",
+                "Date",
+                "Time"
+            ]
+        ]
+
+    for row in rows[1:]:
+        if len(row) >= 2:
+            if (
+                row[0].lower()
+                == name.lower()
+                and row[1] == today
+            ):
+                return False
+
+    rows.append(
+        [
+            name,
+            today,
+            current_time
+        ]
+    )
+
+    write_attendance_rows(
+        rows
+    )
+
+    log_security_event(
+        "ATTENDANCE_MARKED",
+        (
+            f"Name: {name} | "
+            f"Date: {today} | "
+            f"Time: {current_time}"
+        )
+    )
+
+    return True
+
+
+def view_attendance():
+    rows = read_attendance_rows()
+
+    window = tk.Toplevel(root)
+
+    window.title(
+        "Attendance History"
+    )
+
+    window.geometry(
+        "760x500"
+    )
+
+    window.configure(
+        bg=BG
+    )
+
+    tk.Label(
+        window,
+        text="ATTENDANCE HISTORY",
+        font=("Segoe UI", 20, "bold"),
+        bg=BG,
+        fg=GREEN
+    ).pack(
+        pady=15
+    )
+
+    box = tk.Text(
+        window,
+        bg=CARD,
+        fg=TEXT,
+        font=("Consolas", 11),
+        relief="flat"
+    )
+
+    box.pack(
+        fill="both",
+        expand=True,
+        padx=20,
+        pady=10
+    )
+
+    if not rows:
+        box.insert(
+            "end",
+            "No attendance records."
+        )
+    else:
+        for row in rows:
+            box.insert(
+                "end",
+                " | ".join(row)
+                + "\n"
+            )
+
+    box.config(
         state="disabled"
     )
 
@@ -2186,7 +2321,9 @@ def view_security_log():
 # UNKNOWN FACE INCIDENT
 # ============================================================
 
-def create_unknown_incident(frame):
+def create_unknown_incident(
+    frame
+):
     global last_incident_id
 
     try:
@@ -2206,7 +2343,7 @@ def create_unknown_incident(frame):
             + ".jpg.enc"
         )
 
-        filepath = os.path.join(
+        path = os.path.join(
             SECURE_INCIDENTS_DIR,
             filename
         )
@@ -2221,26 +2358,20 @@ def create_unknown_incident(frame):
         )
 
         if not success:
-            log_security_event(
-                "UNKNOWN_FACE_SNAPSHOT_FAILED",
-                f"Incident ID: {incident_id}"
-            )
-
             return None
 
+        data = buffer.tobytes()
+
         write_encrypted_file(
-            filepath,
-            buffer.tobytes()
+            path,
+            data
         )
 
-        if (
-            read_encrypted_file(
-                filepath
-            )
-            != buffer.tobytes()
-        ):
+        if read_encrypted_file(
+            path
+        ) != data:
             raise ValueError(
-                "Encrypted snapshot verification failed."
+                "Snapshot verification failed."
             )
 
         last_incident_id = incident_id
@@ -2249,20 +2380,15 @@ def create_unknown_incident(frame):
             "UNKNOWN_FACE_DETECTED",
             (
                 f"Incident ID: {incident_id} | "
-                f"Encrypted Snapshot: {filepath}"
+                "Encrypted snapshot created"
             )
-        )
-
-        print(
-            f"UNKNOWN INCIDENT CREATED: "
-            f"{incident_id}"
         )
 
         return incident_id
 
     except Exception as error:
         print(
-            "Incident creation error:",
+            "Incident error:",
             error
         )
 
@@ -2274,10 +2400,6 @@ def create_unknown_incident(frame):
         return None
 
 
-# ============================================================
-# UNKNOWN FACE SNAPSHOT VIEWER
-# ============================================================
-
 def view_unknown_incidents():
     window = tk.Toplevel(root)
 
@@ -2286,7 +2408,7 @@ def view_unknown_incidents():
     )
 
     window.geometry(
-        "950x680"
+        "1000x700"
     )
 
     window.configure(
@@ -2314,7 +2436,7 @@ def view_unknown_incidents():
                 for f in os.listdir(
                     SECURE_INCIDENTS_DIR
                 )
-                if f.lower().endswith(
+                if f.endswith(
                     ".jpg.enc"
                 )
             ],
@@ -2324,16 +2446,13 @@ def view_unknown_incidents():
     if not files:
         tk.Label(
             window,
-            text=(
-                "No unknown face incidents recorded."
-            ),
+            text="No incidents recorded.",
             font=("Segoe UI", 12),
             bg=BG,
             fg=MUTED
         ).pack(
-            pady=40
+            pady=50
         )
-
         return
 
     content = tk.Frame(
@@ -2359,46 +2478,43 @@ def view_unknown_incidents():
         padx=(0, 15)
     )
 
-    tk.Label(
-        left,
-        text="INCIDENTS",
-        font=("Segoe UI", 10, "bold"),
-        bg=BG,
-        fg=MUTED
-    ).pack(
-        anchor="w",
-        pady=(0, 5)
-    )
-
     listbox = tk.Listbox(
         left,
+        width=34,
+        height=28,
         bg=CARD,
         fg=TEXT,
         selectbackground=BLUE,
-        selectforeground=WHITE,
         font=("Consolas", 10),
-        relief="flat",
-        width=32
+        relief="flat"
     )
 
     listbox.pack(
-        side="left",
         fill="y"
     )
 
-    image_frame = tk.Frame(
+    for filename in files:
+        listbox.insert(
+            "end",
+            filename.replace(
+                ".jpg.enc",
+                ""
+            )
+        )
+
+    right = tk.Frame(
         content,
         bg="#000000"
     )
 
-    image_frame.pack(
+    right.pack(
         side="right",
         fill="both",
         expand=True
     )
 
     image_label = tk.Label(
-        image_frame,
+        right,
         bg="#000000"
     )
 
@@ -2407,31 +2523,17 @@ def view_unknown_incidents():
         expand=True
     )
 
-    info_label = tk.Label(
+    info = tk.Label(
         window,
-        text=(
-            "Select an incident to view "
-            "the encrypted snapshot."
-        ),
-        font=("Consolas", 10),
+        text="Select an incident.",
         bg=BG,
-        fg=YELLOW
+        fg=YELLOW,
+        font=("Consolas", 10)
     )
 
-    info_label.pack(
-        pady=(0, 12)
+    info.pack(
+        pady=10
     )
-
-    for filename in files:
-        incident_id = filename.replace(
-            ".jpg.enc",
-            ""
-        )
-
-        listbox.insert(
-            "end",
-            incident_id
-        )
 
     def show_selected(event=None):
         selection = listbox.curselection()
@@ -2465,7 +2567,7 @@ def view_unknown_incidents():
 
             if image is None:
                 raise ValueError(
-                    "Could not decode encrypted snapshot."
+                    "Invalid snapshot."
                 )
 
             image = cv2.cvtColor(
@@ -2473,16 +2575,16 @@ def view_unknown_incidents():
                 cv2.COLOR_BGR2RGB
             )
 
-            pil_image = Image.fromarray(
+            pil = Image.fromarray(
                 image
             )
 
-            pil_image.thumbnail(
-                (620, 500)
+            pil.thumbnail(
+                (650, 500)
             )
 
             photo = ImageTk.PhotoImage(
-                pil_image
+                pil
             )
 
             image_label.config(
@@ -2491,20 +2593,19 @@ def view_unknown_incidents():
 
             image_label.image = photo
 
-            info_label.config(
+            info.config(
                 text=(
                     f"INCIDENT: "
                     f"{filename.replace('.jpg.enc', '')} "
-                    "| Encrypted snapshot decrypted "
-                    "for viewing"
-                ),
-                fg=YELLOW
+                    "| ENCRYPTED SNAPSHOT DECRYPTED"
+                )
             )
 
         except Exception as error:
             messagebox.showerror(
                 "Snapshot Error",
-                str(error)
+                str(error),
+                parent=window
             )
 
     listbox.bind(
@@ -2512,19 +2613,17 @@ def view_unknown_incidents():
         show_selected
     )
 
-    if files:
-        listbox.selection_set(0)
-
-        listbox.event_generate(
-            "<<ListboxSelect>>"
-        )
+    listbox.selection_set(0)
+    show_selected()
 
 
 # ============================================================
-# BASIC LIVENESS / BLINK DETECTION
+# LIVENESS
 # ============================================================
 
-def eye_aspect_ratio(eye):
+def eye_aspect_ratio(
+    eye
+):
     points = np.asarray(
         eye,
         dtype=np.float32
@@ -2549,43 +2648,62 @@ def eye_aspect_ratio(eye):
         return 1.0
 
     return float(
-        (vertical_1 + vertical_2)
-        / (2.0 * horizontal)
+        (
+            vertical_1
+            + vertical_2
+        )
+        / (
+            2.0 * horizontal
+        )
     )
 
 
-def calculate_face_ear(landmarks):
-    left_eye = landmarks.get(
+def calculate_face_ear(
+    landmarks
+):
+    left = landmarks.get(
         "left_eye",
         []
     )
 
-    right_eye = landmarks.get(
+    right = landmarks.get(
         "right_eye",
         []
     )
 
     if (
-        len(left_eye) != 6
-        or len(right_eye) != 6
+        len(left) != 6
+        or len(right) != 6
     ):
         return None
 
-    left_ear = eye_aspect_ratio(
-        left_eye
-    )
-
-    right_ear = eye_aspect_ratio(
-        right_eye
-    )
-
     return (
-        left_ear
-        + right_ear
+        eye_aspect_ratio(left)
+        + eye_aspect_ratio(right)
     ) / 2.0
 
 
-def update_liveness(ear):
+def reset_liveness():
+    global liveness_started_at
+    global liveness_verified
+    global liveness_closed_frames
+    global liveness_was_closed
+    global last_liveness_log_time
+
+    liveness_started_at = time.time()
+
+    liveness_verified = False
+
+    liveness_closed_frames = 0
+
+    liveness_was_closed = False
+
+    last_liveness_log_time = 0
+
+
+def update_liveness(
+    ear
+):
     global liveness_verified
     global liveness_closed_frames
     global liveness_was_closed
@@ -2597,6 +2715,7 @@ def update_liveness(ear):
         return "FACE ONLY"
 
     if ear < BLINK_EAR_THRESHOLD:
+
         liveness_closed_frames += 1
 
         if (
@@ -2606,6 +2725,7 @@ def update_liveness(ear):
             liveness_was_closed = True
 
     else:
+
         if liveness_was_closed:
             liveness_verified = True
             liveness_was_closed = False
@@ -2618,70 +2738,50 @@ def update_liveness(ear):
     return "BLINK TO VERIFY"
 
 
-def reset_liveness():
-    global liveness_started_at
-    global liveness_verified
-    global liveness_closed_frames
-    global liveness_was_closed
-    global last_liveness_log_time
-
-    liveness_started_at = time.time()
-    liveness_verified = False
-    liveness_closed_frames = 0
-    liveness_was_closed = False
-    last_liveness_log_time = 0.0
-
-
 # ============================================================
 # FACE ANALYSIS
 # ============================================================
 
-def analyze_frame(frame):
+def analyze_frame(
+    frame
+):
     global processing_frame
     global latest_results
 
     try:
-        small_frame = cv2.resize(
+        small = cv2.resize(
             frame,
             (0, 0),
             fx=0.25,
             fy=0.25
         )
 
-        rgb_small = cv2.cvtColor(
-            small_frame,
+        rgb = cv2.cvtColor(
+            small,
             cv2.COLOR_BGR2RGB
         )
 
-        locations = (
-            face_recognition.face_locations(
-                rgb_small,
-                model="hog"
-            )
+        locations = face_recognition.face_locations(
+            rgb,
+            model="hog"
         )
 
-        encodings = (
-            face_recognition.face_encodings(
-                rgb_small,
-                locations
-            )
+        encodings = face_recognition.face_encodings(
+            rgb,
+            locations
         )
 
-        landmarks_list = (
-            face_recognition.face_landmarks(
-                rgb_small,
-                locations
-            )
+        landmarks = face_recognition.face_landmarks(
+            rgb,
+            locations
         )
 
         results = []
 
-        for index, location in enumerate(
+        for i, location in enumerate(
             locations
         ):
-            top, right, bottom, left = (
-                location
-            )
+            top, right, bottom, left = location
 
             top *= 4
             right *= 4
@@ -2691,45 +2791,37 @@ def analyze_frame(frame):
             name = "Unknown"
 
             if (
-                index < len(encodings)
+                i < len(encodings)
                 and known_encodings
             ):
-                distances = (
-                    face_recognition.face_distance(
-                        known_encodings,
-                        encodings[index]
-                    )
+                distances = face_recognition.face_distance(
+                    known_encodings,
+                    encodings[i]
                 )
 
-                if len(distances) > 0:
-                    best_index = int(
+                if len(distances):
+
+                    best = int(
                         np.argmin(
                             distances
                         )
                     )
 
-                    best_distance = float(
-                        distances[
-                            best_index
-                        ]
-                    )
-
                     if (
-                        best_distance
+                        float(
+                            distances[best]
+                        )
                         <= FACE_THRESHOLD
                     ):
                         name = known_names[
-                            best_index
+                            best
                         ]
 
             ear = None
 
-            if (
-                index
-                < len(landmarks_list)
-            ):
+            if i < len(landmarks):
                 ear = calculate_face_ear(
-                    landmarks_list[index]
+                    landmarks[i]
                 )
 
             results.append(
@@ -2750,7 +2842,7 @@ def analyze_frame(frame):
 
     except Exception as error:
         print(
-            "Face analysis error:",
+            "Analysis error:",
             error
         )
 
@@ -2759,7 +2851,7 @@ def analyze_frame(frame):
 
 
 # ============================================================
-# SCANNER
+# SCANNER STOP
 # ============================================================
 
 def scanner_stop():
@@ -2777,7 +2869,6 @@ def scanner_stop():
     if camera is not None:
         try:
             camera.release()
-
         except Exception:
             pass
 
@@ -2795,19 +2886,21 @@ def scanner_stop():
 
     try:
         cv2.destroyAllWindows()
-
     except Exception:
         pass
 
     if scanner_window is not None:
         try:
             scanner_window.destroy()
-
         except Exception:
             pass
 
     scanner_window = None
 
+
+# ============================================================
+# SCANNER UPDATE
+# ============================================================
 
 def scanner_update():
     global camera_frame_count
@@ -2817,9 +2910,6 @@ def scanner_update():
     global stable_count
     global last_recognized_name
     global latest_results
-    global scanner_status_label
-    global scanner_incident_label
-    global scanner_liveness_label
     global last_liveness_log_time
 
     if not camera_running:
@@ -2832,12 +2922,10 @@ def scanner_update():
     ret, frame = camera.read()
 
     if not ret:
-        if scanner_window is not None:
-            scanner_window.after(
-                30,
-                scanner_update
-            )
-
+        scanner_window.after(
+            30,
+            scanner_update
+        )
         return
 
     frame = cv2.flip(
@@ -2847,18 +2935,16 @@ def scanner_update():
 
     camera_frame_count += 1
 
-    # Background processing every 6th frame.
+    # Process every 6th frame in background.
     if (
         camera_frame_count % 6 == 0
         and not processing_frame
     ):
         processing_frame = True
 
-        worker_frame = frame.copy()
-
         threading.Thread(
             target=analyze_frame,
-            args=(worker_frame,),
+            args=(frame.copy(),),
             daemon=True
         ).start()
 
@@ -2867,19 +2953,18 @@ def scanner_update():
             latest_results
         )
 
-    display_frame = frame.copy()
+    display = frame.copy()
 
     found_known = False
     found_unknown = False
-    current_known_name = ""
+    current_name = ""
     best_ear = None
 
     for result in results:
+
         name = result["name"]
 
-        top, right, bottom, left = (
-            result["box"]
-        )
+        top, right, bottom, left = result["box"]
 
         ear = result.get(
             "ear"
@@ -2888,7 +2973,7 @@ def scanner_update():
         if name == "Unknown":
             found_unknown = True
 
-            box_color = (
+            color = (
                 255,
                 77,
                 103
@@ -2897,9 +2982,9 @@ def scanner_update():
         else:
             found_known = True
 
-            current_known_name = name
+            current_name = name
 
-            box_color = (
+            color = (
                 0,
                 229,
                 160
@@ -2909,17 +2994,15 @@ def scanner_update():
             best_ear = ear
 
         cv2.rectangle(
-            display_frame,
+            display,
             (left, top),
             (right, bottom),
-            box_color,
+            color,
             2
         )
 
-        label = name
-
         cv2.rectangle(
-            display_frame,
+            display,
             (
                 left,
                 max(
@@ -2931,13 +3014,13 @@ def scanner_update():
                 right,
                 top
             ),
-            box_color,
+            color,
             -1
         )
 
         cv2.putText(
-            display_frame,
-            label,
+            display,
+            name,
             (
                 left + 5,
                 top - 8
@@ -2953,18 +3036,20 @@ def scanner_update():
     # --------------------------------------------------------
 
     if results:
-        liveness_text = update_liveness(
+
+        liveness = update_liveness(
             best_ear
         )
 
-        if scanner_liveness_label is not None:
-            if liveness_text == "LIVE":
+        if scanner_liveness_label:
+
+            if liveness == "LIVE":
                 scanner_liveness_label.config(
                     text="LIVENESS: LIVE",
                     fg=GREEN
                 )
 
-            elif liveness_text == "FACE ONLY":
+            elif liveness == "FACE ONLY":
                 scanner_liveness_label.config(
                     text="LIVENESS: FACE DETECTED",
                     fg=YELLOW
@@ -2977,30 +3062,33 @@ def scanner_update():
                 )
 
     else:
+
         reset_liveness()
 
-        if scanner_liveness_label is not None:
+        if scanner_liveness_label:
             scanner_liveness_label.config(
                 text="LIVENESS: WAITING FOR FACE",
                 fg=MUTED
             )
 
     # --------------------------------------------------------
-    # UNKNOWN FACE INCIDENT
+    # UNKNOWN FACE
     # --------------------------------------------------------
 
     if found_unknown:
+
         stable_name = ""
         stable_count = 0
         last_recognized_name = ""
 
-        if scanner_status_label is not None:
+        if scanner_status_label:
             scanner_status_label.config(
                 text="UNKNOWN FACE DETECTED",
                 fg=RED
             )
 
         if not unknown_alerted:
+
             incident_id = create_unknown_incident(
                 frame.copy()
             )
@@ -3010,7 +3098,6 @@ def scanner_update():
             if (
                 incident_id
                 and scanner_incident_label
-                is not None
             ):
                 scanner_incident_label.config(
                     text=f"INCIDENT ID: {incident_id}",
@@ -3028,7 +3115,6 @@ def scanner_update():
             except Exception:
                 try:
                     root.bell()
-
                 except Exception:
                     pass
 
@@ -3037,56 +3123,52 @@ def scanner_update():
     # --------------------------------------------------------
 
     elif found_known:
-        if stable_name == current_known_name:
-            stable_count += 1
 
+        if stable_name == current_name:
+            stable_count += 1
         else:
-            stable_name = current_known_name
+            stable_name = current_name
             stable_count = 1
 
         if (
             stable_count >= 2
             and liveness_verified
         ):
+
             if (
                 last_recognized_name
-                != current_known_name
+                != current_name
             ):
+
                 log_security_event(
                     "KNOWN_FACE_DETECTED",
                     (
-                        f"Name: {current_known_name} | "
+                        f"Name: {current_name} | "
                         "Liveness: LIVE"
                     )
                 )
 
-                mark_attendance(
-                    current_known_name
+                marked = mark_attendance(
+                    current_name
                 )
 
                 last_recognized_name = (
-                    current_known_name
+                    current_name
                 )
 
-            if scanner_status_label is not None:
+            if scanner_status_label:
                 scanner_status_label.config(
-                    text=(
-                        f"VERIFIED: "
-                        f"{current_known_name}"
-                    ),
+                    text=f"VERIFIED: {current_name}",
                     fg=GREEN
                 )
 
-        elif (
-            stable_count >= 2
-            and not liveness_verified
-        ):
-            if scanner_status_label is not None:
+        elif stable_count >= 2:
+
+            if scanner_status_label:
                 scanner_status_label.config(
                     text=(
-                        f"IDENTIFIED: "
-                        f"{current_known_name} - "
-                        "BLINK TO VERIFY"
+                        f"IDENTIFIED: {current_name} "
+                        "- BLINK TO VERIFY"
                     ),
                     fg=YELLOW
                 )
@@ -3095,16 +3177,15 @@ def scanner_update():
                 time.time()
                 - liveness_started_at
                 > LIVENESS_TIMEOUT_SECONDS
-                and time.time()
+                and
+                time.time()
                 - last_liveness_log_time
                 > LIVENESS_TIMEOUT_SECONDS
             ):
+
                 log_security_event(
                     "LIVENESS_NOT_VERIFIED",
-                    (
-                        f"Candidate: "
-                        f"{current_known_name}"
-                    )
+                    f"Candidate: {current_name}"
                 )
 
                 last_liveness_log_time = (
@@ -3116,18 +3197,24 @@ def scanner_update():
     # --------------------------------------------------------
 
     else:
+
         stable_name = ""
         stable_count = 0
 
-        if scanner_status_label is not None:
+        if scanner_status_label:
             scanner_status_label.config(
                 text="SCANNING...",
                 fg=BLUE
             )
 
-    if scanner_video_label is not None:
+    # --------------------------------------------------------
+    # DISPLAY
+    # --------------------------------------------------------
+
+    if scanner_video_label:
+
         rgb = cv2.cvtColor(
-            display_frame,
+            display,
             cv2.COLOR_BGR2RGB
         )
 
@@ -3159,6 +3246,10 @@ def scanner_update():
         )
 
 
+# ============================================================
+# START SCANNER
+# ============================================================
+
 def start_scanner():
     global camera
     global camera_running
@@ -3179,25 +3270,20 @@ def start_scanner():
 
     load_face_encodings()
 
-    if len(known_encodings) == 0:
+    if not known_encodings:
         messagebox.showwarning(
             "No Face Data",
-            (
-                "No registered face encodings found.\n\n"
-                "Register a user first."
-            )
+            "Register a user first."
         )
-
         return
 
     camera = open_camera()
 
     if camera is None:
         messagebox.showerror(
-            "Camera Error",
+            "Camera",
             "Could not open camera."
         )
-
         return
 
     camera_running = True
@@ -3250,9 +3336,7 @@ def start_scanner():
         fg=BLUE
     )
 
-    scanner_status_label.pack(
-        pady=4
-    )
+    scanner_status_label.pack()
 
     scanner_liveness_label = tk.Label(
         scanner_window,
@@ -3263,32 +3347,27 @@ def start_scanner():
     )
 
     scanner_liveness_label.pack(
-        pady=3
+        pady=5
     )
 
     scanner_incident_label = tk.Label(
         scanner_window,
         text="",
-        font=("Consolas", 11, "bold"),
+        font=("Consolas", 10, "bold"),
         bg=BG,
         fg=YELLOW
     )
 
-    scanner_incident_label.pack(
-        pady=3
-    )
+    scanner_incident_label.pack()
 
     tk.Label(
         scanner_window,
-        text=(
-            "Blink once to complete "
-            "the liveness check."
-        ),
+        text="Blink once to complete the liveness check.",
         font=("Segoe UI", 10),
         bg=BG,
         fg=MUTED
     ).pack(
-        pady=(0, 5)
+        pady=5
     )
 
     scanner_video_label = tk.Label(
@@ -3307,18 +3386,330 @@ def start_scanner():
         command=scanner_stop,
         bg=RED,
         fg=WHITE,
-        activebackground=RED,
-        activeforeground=WHITE,
         font=("Segoe UI", 11, "bold"),
         relief="flat",
         padx=25,
-        pady=10,
-        cursor="hand2"
+        pady=10
     ).pack(
         pady=10
     )
 
     scanner_update()
+
+
+# ============================================================
+# ACCOUNT CREATION WINDOW
+# ============================================================
+
+def create_account_window():
+    window = tk.Toplevel(root)
+
+    window.title(
+        "Create User Account"
+    )
+
+    window.geometry(
+        "520x470"
+    )
+
+    window.configure(
+        bg=BG
+    )
+
+    window.transient(root)
+    window.grab_set()
+
+    tk.Label(
+        window,
+        text="CREATE USER ACCOUNT",
+        font=("Segoe UI", 21, "bold"),
+        bg=BG,
+        fg=GREEN
+    ).pack(
+        pady=(25, 5)
+    )
+
+    tk.Label(
+        window,
+        text=(
+            "Create an account for application access."
+        ),
+        font=("Segoe UI", 9),
+        bg=BG,
+        fg=MUTED
+    ).pack(
+        pady=(0, 20)
+    )
+
+    card = tk.Frame(
+        window,
+        bg=CARD,
+        padx=30,
+        pady=25
+    )
+
+    card.pack(
+        fill="both",
+        expand=True,
+        padx=35,
+        pady=(0, 30)
+    )
+
+    tk.Label(
+        card,
+        text="Username",
+        bg=CARD,
+        fg=TEXT
+    ).pack(
+        anchor="w"
+    )
+
+    username = tk.Entry(
+        card,
+        bg=CARD2,
+        fg=WHITE,
+        insertbackground=WHITE,
+        relief="flat"
+    )
+
+    username.pack(
+        fill="x",
+        pady=(5, 15),
+        ipady=7
+    )
+
+    tk.Label(
+        card,
+        text="Password",
+        bg=CARD,
+        fg=TEXT
+    ).pack(
+        anchor="w"
+    )
+
+    password = tk.Entry(
+        card,
+        show="*",
+        bg=CARD2,
+        fg=WHITE,
+        insertbackground=WHITE,
+        relief="flat"
+    )
+
+    password.pack(
+        fill="x",
+        pady=(5, 15),
+        ipady=7
+    )
+
+    tk.Label(
+        card,
+        text="Confirm Password",
+        bg=CARD,
+        fg=TEXT
+    ).pack(
+        anchor="w"
+    )
+
+    confirm = tk.Entry(
+        card,
+        show="*",
+        bg=CARD2,
+        fg=WHITE,
+        insertbackground=WHITE,
+        relief="flat"
+    )
+
+    confirm.pack(
+        fill="x",
+        pady=(5, 15),
+        ipady=7
+    )
+
+    def create():
+        user = username.get().strip()
+        p1 = password.get()
+        p2 = confirm.get()
+
+        if p1 != p2:
+            messagebox.showwarning(
+                "Password",
+                "Passwords do not match.",
+                parent=window
+            )
+            return
+
+        success, message = create_user_account(
+            user,
+            p1,
+            "USER"
+        )
+
+        if success:
+            messagebox.showinfo(
+                "Account Created",
+                message,
+                parent=window
+            )
+
+            window.destroy()
+
+        else:
+            messagebox.showwarning(
+                "Account",
+                message,
+                parent=window
+            )
+
+    tk.Button(
+        card,
+        text="CREATE ACCOUNT",
+        command=create,
+        bg=GREEN,
+        fg="#07111d",
+        font=("Segoe UI", 11, "bold"),
+        relief="flat",
+        pady=10
+    ).pack(
+        fill="x",
+        pady=5
+    )
+
+
+# ============================================================
+# ACCOUNT MANAGEMENT
+# ============================================================
+
+def manage_accounts():
+    accounts = load_user_accounts()
+
+    window = tk.Toplevel(root)
+
+    window.title(
+        "User Account Management"
+    )
+
+    window.geometry(
+        "700x560"
+    )
+
+    window.configure(
+        bg=BG
+    )
+
+    tk.Label(
+        window,
+        text="USER ACCOUNT MANAGEMENT",
+        font=("Segoe UI", 20, "bold"),
+        bg=BG,
+        fg=GREEN
+    ).pack(
+        pady=20
+    )
+
+    listbox = tk.Listbox(
+        window,
+        bg=CARD,
+        fg=TEXT,
+        selectbackground=GREEN,
+        selectforeground="#07111d",
+        font=("Consolas", 11),
+        relief="flat"
+    )
+
+    listbox.pack(
+        fill="both",
+        expand=True,
+        padx=30,
+        pady=10
+    )
+
+    def refresh():
+        listbox.delete(
+            0,
+            "end"
+        )
+
+        accounts = load_user_accounts()
+
+        for key, account in sorted(
+            accounts.items()
+        ):
+            listbox.insert(
+                "end",
+                (
+                    f"{account.get('username', key)} "
+                    f"| Role: {account.get('role', 'USER')} "
+                    f"| Created: "
+                    f"{account.get('created_at', '-')}"
+                )
+            )
+
+    refresh()
+
+    buttons = tk.Frame(
+        window,
+        bg=BG
+    )
+
+    buttons.pack(
+        pady=15
+    )
+
+    def delete_selected():
+        selection = listbox.curselection()
+
+        if not selection:
+            return
+
+        line = listbox.get(
+            selection[0]
+        )
+
+        username = line.split(
+            "|"
+        )[0].strip()
+
+        if not messagebox.askyesno(
+            "Delete Account",
+            f"Delete account '{username}'?",
+            parent=window
+        ):
+            return
+
+        delete_user_account(
+            username
+        )
+
+        refresh()
+
+    tk.Button(
+        buttons,
+        text="CREATE ACCOUNT",
+        command=create_account_window,
+        bg=GREEN,
+        fg="#07111d",
+        relief="flat",
+        padx=18,
+        pady=9
+    ).pack(
+        side="left",
+        padx=5
+    )
+
+    tk.Button(
+        buttons,
+        text="DELETE ACCOUNT",
+        command=delete_selected,
+        bg=RED,
+        fg=WHITE,
+        relief="flat",
+        padx=18,
+        pady=9
+    ).pack(
+        side="left",
+        padx=5
+    )
 
 
 # ============================================================
@@ -3329,12 +3720,10 @@ dashboard_user_count_label = None
 
 
 def refresh_dashboard():
-    global dashboard_user_count_label
-
-    if dashboard_user_count_label is not None:
+    if dashboard_user_count_label:
         dashboard_user_count_label.config(
             text=(
-                f"Registered Users: "
+                f"Registered Face Users: "
                 f"{len(get_users())}"
             )
         )
@@ -3345,6 +3734,21 @@ def clear_root():
         widget.destroy()
 
 
+def logout():
+    global current_user
+    global current_user_role
+
+    log_security_event(
+        "LOGOUT",
+        f"User: {current_user or 'ADMIN'}"
+    )
+
+    current_user = None
+    current_user_role = None
+
+    show_login()
+
+
 def show_dashboard():
     clear_root()
 
@@ -3353,7 +3757,7 @@ def show_dashboard():
     )
 
     root.geometry(
-        "780x730"
+        "820x820"
     )
 
     root.configure(
@@ -3373,7 +3777,7 @@ def show_dashboard():
     header.pack(
         fill="x",
         padx=30,
-        pady=(25, 10)
+        pady=(22, 8)
     )
 
     tk.Label(
@@ -3395,18 +3799,33 @@ def show_dashboard():
         fg=MUTED
     ).pack()
 
+    session_text = (
+        f"Logged in as: "
+        f"{current_user or 'ADMIN'}"
+    )
+
+    tk.Label(
+        header,
+        text=session_text,
+        font=("Segoe UI", 10, "bold"),
+        bg=BG,
+        fg=YELLOW
+    ).pack(
+        pady=5
+    )
+
     card = tk.Frame(
         root,
         bg=CARD,
         padx=25,
-        pady=25
+        pady=22
     )
 
     card.pack(
         fill="both",
         expand=True,
         padx=30,
-        pady=15
+        pady=12
     )
 
     global dashboard_user_count_label
@@ -3414,7 +3833,7 @@ def show_dashboard():
     dashboard_user_count_label = tk.Label(
         card,
         text=(
-            f"Registered Users: "
+            f"Registered Face Users: "
             f"{len(get_users())}"
         ),
         font=("Segoe UI", 15, "bold"),
@@ -3423,17 +3842,17 @@ def show_dashboard():
     )
 
     dashboard_user_count_label.pack(
-        pady=(0, 8)
+        pady=(0, 7)
     )
 
     tk.Label(
         card,
-        text="ENCRYPTED STORAGE ACTIVE",
-        font=("Segoe UI", 11, "bold"),
+        text="AES-256-GCM ENCRYPTED STORAGE ACTIVE",
+        font=("Segoe UI", 10, "bold"),
         bg=CARD,
         fg=GREEN
     ).pack(
-        pady=(0, 15)
+        pady=(0, 12)
     )
 
     def make_button(
@@ -3449,10 +3868,9 @@ def show_dashboard():
             fg=WHITE,
             activebackground=color,
             activeforeground=WHITE,
-            font=("Segoe UI", 11, "bold"),
+            font=("Segoe UI", 10, "bold"),
             relief="flat",
-            padx=15,
-            pady=10,
+            pady=9,
             cursor="hand2"
         )
 
@@ -3462,34 +3880,34 @@ def show_dashboard():
         GREEN
     ).pack(
         fill="x",
-        pady=5
+        pady=4
     )
 
     make_button(
-        "REGISTER USER",
+        "REGISTER FACE USER",
         register_user,
         BLUE
     ).pack(
         fill="x",
-        pady=5
+        pady=4
     )
 
     make_button(
-        "DELETE USER",
+        "DELETE FACE USER",
         delete_user,
         RED
     ).pack(
         fill="x",
-        pady=5
+        pady=4
     )
 
     make_button(
-        "VIEW REGISTERED USER PROFILES",
+        "VIEW USER PROFILES",
         view_user_profiles,
         BLUE
     ).pack(
         fill="x",
-        pady=5
+        pady=4
     )
 
     make_button(
@@ -3498,7 +3916,7 @@ def show_dashboard():
         BLUE
     ).pack(
         fill="x",
-        pady=5
+        pady=4
     )
 
     make_button(
@@ -3507,7 +3925,7 @@ def show_dashboard():
         YELLOW
     ).pack(
         fill="x",
-        pady=5
+        pady=4
     )
 
     make_button(
@@ -3516,7 +3934,40 @@ def show_dashboard():
         RED
     ).pack(
         fill="x",
-        pady=5
+        pady=4
+    )
+
+    make_button(
+        "USER ACCOUNT MANAGEMENT",
+        manage_accounts,
+        BLUE
+    ).pack(
+        fill="x",
+        pady=4
+    )
+
+    if (
+        current_user
+        and current_user_role == "USER"
+    ):
+        make_button(
+            "CHANGE MY PASSWORD",
+            lambda: change_user_password(
+                current_user
+            ),
+            BLUE
+        ).pack(
+            fill="x",
+            pady=4
+        )
+
+    make_button(
+        "LOGOUT",
+        logout,
+        YELLOW
+    ).pack(
+        fill="x",
+        pady=(12, 4)
     )
 
     make_button(
@@ -3525,85 +3976,65 @@ def show_dashboard():
         RED
     ).pack(
         fill="x",
-        pady=(15, 0)
+        pady=4
     )
 
 
 # ============================================================
-# LOGIN - PROGRESSIVE BRUTE-FORCE PROTECTION
+# ADMIN LOGIN
 # ============================================================
 
-def login():
-    global login_failed_attempts
-    global login_locked_until
-    global progressive_lock_level
+def admin_login():
+    global admin_failed_attempts
+    global admin_locked_until
+    global admin_progressive_level
+    global current_user
+    global current_user_role
 
-    current_time = time.time()
+    now = time.time()
 
-    # --------------------------------------------------------
-    # CHECK ACTIVE LOCKOUT
-    # --------------------------------------------------------
+    if now < admin_locked_until:
 
-    if current_time < login_locked_until:
         remaining = int(
-            login_locked_until
-            - current_time
+            admin_locked_until - now
         ) + 1
 
-        minutes = remaining // 60
-        seconds = remaining % 60
-
-        if minutes > 0:
-            lock_text = (
-                "ACCOUNT LOCKED - "
-                f"Try again in "
-                f"{minutes}m {seconds}s"
-            )
-
-        else:
-            lock_text = (
-                "ACCOUNT LOCKED - "
-                f"Try again in "
-                f"{seconds}s"
-            )
-
         login_status.config(
-            text=lock_text,
+            text=(
+                f"ADMIN LOCKED - "
+                f"{remaining} seconds remaining"
+            ),
             fg=RED
         )
 
-        # Keep countdown updated.
         root.after(
             1000,
-            login
+            admin_login
         )
 
         return
 
-    # --------------------------------------------------------
-    # READ PASSWORD
-    # --------------------------------------------------------
-
     password = password_entry.get()
 
-    # --------------------------------------------------------
-    # SUCCESSFUL LOGIN
-    # --------------------------------------------------------
+    password_entry.delete(
+        0,
+        "end"
+    )
 
-    if verify_admin_password(password):
+    if (
+        hash_password(password)
+        == ADMIN_PASSWORD_HASH
+    ):
 
-        # Reset failed attempts.
-        login_failed_attempts = 0
+        admin_failed_attempts = 0
+        admin_locked_until = 0
+        admin_progressive_level = 0
 
-        # Remove active lockout.
-        login_locked_until = 0
-
-        # Reset progressive lock level
-        # after successful authentication.
-        progressive_lock_level = 0
+        current_user = None
+        current_user_role = "ADMIN"
 
         log_security_event(
-            "LOGIN_SUCCESS",
+            "ADMIN_LOGIN_SUCCESS",
             "Admin authentication successful"
         )
 
@@ -3611,135 +4042,196 @@ def login():
 
         return
 
-    # --------------------------------------------------------
-    # FAILED LOGIN
-    # --------------------------------------------------------
-
-    login_failed_attempts += 1
+    admin_failed_attempts += 1
 
     log_security_event(
-        "LOGIN_FAILED",
+        "ADMIN_LOGIN_FAILED",
         (
             f"Attempt: "
-            f"{login_failed_attempts}/"
+            f"{admin_failed_attempts}/"
             f"{MAX_LOGIN_ATTEMPTS}"
         )
     )
 
-    # Clear password immediately.
+    if (
+        admin_failed_attempts
+        >= MAX_LOGIN_ATTEMPTS
+    ):
+
+        admin_progressive_level += 1
+
+        level = admin_progressive_level
+
+        if level == 1:
+            lockout = 5 * 60
+        elif level == 2:
+            lockout = 15 * 60
+        elif level == 3:
+            lockout = 30 * 60
+        else:
+            lockout = MAX_LOCKOUT_SECONDS
+
+        admin_locked_until = (
+            time.time()
+            + lockout
+        )
+
+        admin_failed_attempts = 0
+
+        log_security_event(
+            "ADMIN_LOGIN_LOCKOUT",
+            (
+                f"Level: {level} | "
+                f"Lockout: {lockout} seconds"
+            )
+        )
+
+        login_status.config(
+            text=(
+                f"ADMIN LOCKED - "
+                f"{lockout // 60} minutes"
+            ),
+            fg=RED
+        )
+
+    else:
+
+        remaining = (
+            MAX_LOGIN_ATTEMPTS
+            - admin_failed_attempts
+        )
+
+        login_status.config(
+            text=(
+                f"Wrong password. "
+                f"{remaining} attempt(s) remaining."
+            ),
+            fg=RED
+        )
+
+
+# ============================================================
+# USER LOGIN
+# ============================================================
+
+def user_login():
+    global current_user
+    global current_user_role
+
+    username = username_entry.get().strip()
+    password = password_entry.get()
+
     password_entry.delete(
         0,
         "end"
     )
 
-    # --------------------------------------------------------
-    # LOCKOUT AFTER 2 FAILED ATTEMPTS
-    # --------------------------------------------------------
-
-    if (
-        login_failed_attempts
-        >= MAX_LOGIN_ATTEMPTS
-    ):
-
-        # Increase progressive lock level.
-        progressive_lock_level += 1
-
-        # ----------------------------------------------------
-        # PROGRESSIVE LOCKOUT SCHEDULE
-        # ----------------------------------------------------
-        #
-        # Level 1 = 5 minutes
-        # Level 2 = 15 minutes
-        # Level 3 = 30 minutes
-        # Level 4+ = 60 minutes
-        #
-
-        if progressive_lock_level == 1:
-            lockout_seconds = (
-                INITIAL_LOCKOUT_SECONDS
-            )
-
-        elif progressive_lock_level == 2:
-            lockout_seconds = (
-                15 * 60
-            )
-
-        elif progressive_lock_level == 3:
-            lockout_seconds = (
-                30 * 60
-            )
-
-        else:
-            lockout_seconds = (
-                MAX_LOCKOUT_SECONDS
-            )
-
-        login_locked_until = (
-            time.time()
-            + lockout_seconds
-        )
-
-        # Reset attempts for next cycle.
-        login_failed_attempts = 0
-
-        lock_minutes = (
-            lockout_seconds // 60
-        )
-
+    if not username or not password:
         login_status.config(
-            text=(
-                "ACCOUNT LOCKED - "
-                f"{lock_minutes} minute"
-                f"{'s' if lock_minutes != 1 else ''}"
-            ),
+            text="Enter username and password.",
             fg=RED
         )
+        return
 
-        # Record detailed security event.
-        log_security_event(
-            "LOGIN_LOCKOUT",
-            (
-                f"Progressive Level: "
-                f"{progressive_lock_level} | "
-                f"Lockout: "
-                f"{lock_minutes} minutes | "
-                f"Trigger: "
-                f"{MAX_LOGIN_ATTEMPTS} "
-                "failed attempts"
-            )
+    success, result = verify_user_account(
+        username,
+        password
+    )
+
+    if success:
+
+        current_user = result.get(
+            "username",
+            username
         )
 
-    # --------------------------------------------------------
-    # STILL HAS AN ATTEMPT BEFORE LOCKOUT
-    # --------------------------------------------------------
+        current_user_role = result.get(
+            "role",
+            "USER"
+        )
+
+        log_security_event(
+            "USER_LOGIN_SUCCESS",
+            f"Username: {current_user}"
+        )
+
+        show_dashboard()
 
     else:
-        remaining = (
-            MAX_LOGIN_ATTEMPTS
-            - login_failed_attempts
+
+        log_security_event(
+            "USER_LOGIN_FAILED",
+            f"Username: {username}"
         )
 
         login_status.config(
-            text=(
-                "Wrong password. "
-                f"{remaining} attempt"
-                f"{'s' if remaining != 1 else ''} "
-                "remaining."
-            ),
+            text=result,
             fg=RED
         )
 
+
+# ============================================================
+# LOGIN MODE SWITCH
+# ============================================================
+
+login_mode = "ADMIN"
+
+
+def switch_login_mode():
+    global login_mode
+
+    if login_mode == "ADMIN":
+        login_mode = "USER"
+
+        username_entry.pack(
+            fill="x",
+            pady=(5, 10),
+            ipady=8,
+            before=password_entry
+        )
+
+        mode_button.config(
+            text="SWITCH TO ADMIN LOGIN"
+        )
+
+        title_label.config(
+            text="USER LOGIN"
+        )
+
+    else:
+        login_mode = "ADMIN"
+
+        username_entry.pack_forget()
+
+        mode_button.config(
+            text="SWITCH TO USER LOGIN"
+        )
+
+        title_label.config(
+            text="ADMIN LOGIN"
+        )
+
+
+def perform_login():
+    if login_mode == "ADMIN":
+        admin_login()
+    else:
+        user_login()
+
+
+# ============================================================
+# LOGIN SCREEN
+# ============================================================
 
 def show_login():
     clear_root()
 
     root.title(
-        APP_TITLE
-        + " - Login"
+        APP_TITLE + " - Login"
     )
 
     root.geometry(
-        "520x420"
+        "540x600"
     )
 
     root.configure(
@@ -3755,35 +4247,71 @@ def show_login():
         root,
         bg=CARD,
         padx=40,
-        pady=35
+        pady=30
     )
 
     card.pack(
         fill="both",
         expand=True,
         padx=45,
-        pady=45
+        pady=35
     )
 
     tk.Label(
         card,
         text="AI SECURITY",
-        font=("Segoe UI", 26, "bold"),
+        font=("Segoe UI", 27, "bold"),
         bg=CARD,
         fg=GREEN
     ).pack(
         pady=(0, 5)
     )
 
-    tk.Label(
+    global title_label
+
+    title_label = tk.Label(
         card,
         text="ADMIN LOGIN",
         font=("Segoe UI", 13, "bold"),
         bg=CARD,
         fg=TEXT
-    ).pack(
-        pady=(0, 25)
     )
+
+    title_label.pack(
+        pady=(0, 22)
+    )
+
+    global username_entry
+    global password_entry
+    global login_status
+    global mode_button
+
+    tk.Label(
+        card,
+        text="Username",
+        font=("Segoe UI", 10),
+        bg=CARD,
+        fg=MUTED
+    ).pack(
+        anchor="w"
+    )
+
+    username_entry = tk.Entry(
+        card,
+        font=("Segoe UI", 12),
+        bg=CARD2,
+        fg=WHITE,
+        insertbackground=WHITE,
+        relief="flat"
+    )
+
+    # Hidden in admin mode.
+    if login_mode == "USER":
+        username_entry.pack(
+            fill="x",
+            pady=(5, 10),
+            ipady=8
+        )
 
     tk.Label(
         card,
@@ -3795,13 +4323,10 @@ def show_login():
         anchor="w"
     )
 
-    global password_entry
-    global login_status
-
     password_entry = tk.Entry(
         card,
         show="*",
-        font=("Segoe UI", 13),
+        font=("Segoe UI", 12),
         bg=CARD2,
         fg=WHITE,
         insertbackground=WHITE,
@@ -3816,20 +4341,17 @@ def show_login():
 
     password_entry.bind(
         "<Return>",
-        lambda event: login()
+        lambda event: perform_login()
     )
 
     tk.Button(
         card,
         text="LOGIN",
-        command=login,
+        command=perform_login,
         bg=GREEN,
         fg="#07111d",
-        activebackground=GREEN,
-        activeforeground="#07111d",
         font=("Segoe UI", 11, "bold"),
         relief="flat",
-        padx=20,
         pady=10,
         cursor="hand2"
     ).pack(
@@ -3845,18 +4367,283 @@ def show_login():
     )
 
     login_status.pack(
-        pady=15
+        pady=12
+    )
+
+    mode_button = tk.Button(
+        card,
+        text=(
+            "SWITCH TO ADMIN LOGIN"
+            if login_mode == "USER"
+            else "SWITCH TO USER LOGIN"
+        ),
+        command=switch_login_mode,
+        bg=CARD2,
+        fg=TEXT,
+        font=("Segoe UI", 9, "bold"),
+        relief="flat",
+        pady=8
+    )
+
+    mode_button.pack(
+        fill="x",
+        pady=4
+    )
+
+    tk.Button(
+        card,
+        text="CREATE NEW USER ACCOUNT",
+        command=create_account_window,
+        bg=BLUE,
+        fg=WHITE,
+        font=("Segoe UI", 10, "bold"),
+        relief="flat",
+        pady=9
+    ).pack(
+        fill="x",
+        pady=8
     )
 
     tk.Label(
         card,
         text=(
-            "AES-256-GCM encrypted data storage"
+            "AES-256-GCM encrypted storage\n"
+            "Basic blink-based liveness protection"
         ),
         font=("Segoe UI", 9),
         bg=CARD,
         fg=MUTED
-    ).pack()
+    ).pack(
+        pady=10
+    )
+
+
+# ============================================================
+# LEGACY MIGRATION
+# ============================================================
+
+def encrypt_plain_file(
+    plain_path,
+    encrypted_path
+):
+    try:
+        with open(
+            plain_path,
+            "rb"
+        ) as file:
+            data = file.read()
+
+        write_encrypted_file(
+            encrypted_path,
+            data
+        )
+
+        if read_encrypted_file(
+            encrypted_path
+        ) != data:
+            raise ValueError(
+                "Encryption verification failed."
+            )
+
+        os.remove(
+            plain_path
+        )
+
+    except Exception as error:
+        print(
+            "Migration error:",
+            error
+        )
+
+
+def migrate_existing_data():
+
+    migrate = [
+        (
+            LEGACY_ENCODINGS_FILE,
+            ENCODINGS_FILE
+        ),
+        (
+            LEGACY_ATTENDANCE_FILE,
+            ATTENDANCE_FILE
+        ),
+        (
+            LEGACY_SECURITY_LOG_FILE,
+            SECURITY_LOG_FILE
+        )
+    ]
+
+    for old, new in migrate:
+        if (
+            os.path.exists(old)
+            and not os.path.exists(new)
+        ):
+            encrypt_plain_file(
+                old,
+                new
+            )
+
+    # Migrate face images.
+    if os.path.isdir(
+        LEGACY_KNOWN_FACES_DIR
+    ):
+
+        for username in os.listdir(
+            LEGACY_KNOWN_FACES_DIR
+        ):
+
+            old_dir = os.path.join(
+                LEGACY_KNOWN_FACES_DIR,
+                username
+            )
+
+            if not os.path.isdir(
+                old_dir
+            ):
+                continue
+
+            safe = safe_user_name(
+                username
+            )
+
+            if not safe:
+                continue
+
+            new_dir = os.path.join(
+                SECURE_FACES_DIR,
+                safe
+            )
+
+            os.makedirs(
+                new_dir,
+                exist_ok=True
+            )
+
+            for filename in os.listdir(
+                old_dir
+            ):
+
+                old_file = os.path.join(
+                    old_dir,
+                    filename
+                )
+
+                if not os.path.isfile(
+                    old_file
+                ):
+                    continue
+
+                ext = os.path.splitext(
+                    filename
+                )[1].lower()
+
+                if ext not in {
+                    ".jpg",
+                    ".jpeg",
+                    ".png",
+                    ".bmp"
+                }:
+                    continue
+
+                new_file = os.path.join(
+                    new_dir,
+                    filename + ".enc"
+                )
+
+                if os.path.exists(
+                    new_file
+                ):
+                    continue
+
+                try:
+                    with open(
+                        old_file,
+                        "rb"
+                    ) as file:
+                        data = file.read()
+
+                    write_encrypted_file(
+                        new_file,
+                        data
+                    )
+
+                    if read_encrypted_file(
+                        new_file
+                    ) == data:
+                        os.remove(
+                            old_file
+                        )
+
+                except Exception as error:
+                    print(
+                        "Face migration error:",
+                        error
+                    )
+
+    # Migrate unknown incidents.
+    if os.path.isdir(
+        LEGACY_INCIDENTS_DIR
+    ):
+
+        for filename in os.listdir(
+            LEGACY_INCIDENTS_DIR
+        ):
+
+            old_file = os.path.join(
+                LEGACY_INCIDENTS_DIR,
+                filename
+            )
+
+            if not os.path.isfile(
+                old_file
+            ):
+                continue
+
+            ext = os.path.splitext(
+                filename
+            )[1].lower()
+
+            if ext not in {
+                ".jpg",
+                ".jpeg",
+                ".png"
+            }:
+                continue
+
+            new_file = os.path.join(
+                SECURE_INCIDENTS_DIR,
+                filename + ".enc"
+            )
+
+            if os.path.exists(
+                new_file
+            ):
+                continue
+
+            try:
+                with open(
+                    old_file,
+                    "rb"
+                ) as file:
+                    data = file.read()
+
+                write_encrypted_file(
+                    new_file,
+                    data
+                )
+
+                if read_encrypted_file(
+                    new_file
+                ) == data:
+                    os.remove(
+                        old_file
+                    )
+
+            except Exception as error:
+                print(
+                    "Incident migration error:",
+                    error
+                )
 
 
 # ============================================================
@@ -3866,12 +4653,14 @@ def show_login():
 def main():
     global root
 
-    print("=" * 60)
-    print(APP_TITLE)
-    print("=" * 60)
+    print("=" * 65)
+    print(
+        "AI SECURITY - FACE RECOGNITION"
+    )
+    print("=" * 65)
 
     print(
-        "Initializing AES-256-GCM encryption..."
+        "Initializing AES-256-GCM..."
     )
 
     load_encryption_key()
@@ -3882,11 +4671,17 @@ def main():
 
     root = tk.Tk()
 
+    root.protocol(
+        "WM_DELETE_WINDOW",
+        root.destroy
+    )
+
     log_security_event(
         "SYSTEM_START",
         (
-            "AI Security started "
-            "with encrypted storage"
+            "AI Security started | "
+            "AES-256-GCM active | "
+            "User account system active"
         )
     )
 
