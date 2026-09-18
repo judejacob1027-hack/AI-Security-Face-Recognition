@@ -1,6 +1,0 @@
-opencv-python
-face-recognition
-dlib
-cryptography
-numpy
-Pillow
